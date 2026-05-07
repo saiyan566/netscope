@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ssh-admin-surface",
+    "transport": "tcp",
+    "port": 22,
+    "severity": "info",
+    "title": "SSH administration surface detected",
+    "mode": "remediation-first"
+  },
+  {
+    "id": "plain-http",
+    "transport": "tcp",
+    "port": 80,
+    "severity": "low",
+    "title": "Plain HTTP service detected",
+    "mode": "remediation-first"
+  },
+  {
+    "id": "snmp-responded",
+    "transport": "udp",
+    "port": 161,
+    "severity": "medium",
+    "title": "SNMP service responded",
+    "mode": "safe-probe"
+  }
+]

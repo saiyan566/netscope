@@ -1,0 +1,26 @@
+pkgname=netscope
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Defensive Linux CLI scanner with passive recon"
+arch=("x86_64" "aarch64")
+url="https://github.com/saiyan566/netscope"
+license=("Apache-2.0")
+depends=("ca-certificates")
+optdepends=("libcap: optional setcap support for future raw-socket scanning")
+makedepends=("go" "rust" "cargo" "make")
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/../.."
+  make build
+}
+
+package() {
+  cd "$startdir/../.."
+  install -Dm755 build/netscope "$pkgdir/usr/bin/netscope"
+  install -Dm755 build/netscope-engine "$pkgdir/usr/bin/netscope-engine"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/netscope/README.md"
+  install -d "$pkgdir/usr/share/netscope/templates"
+  cp templates/* "$pkgdir/usr/share/netscope/templates/" 2>/dev/null || true
+}

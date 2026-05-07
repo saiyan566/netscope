@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible Netscope bug.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Netscope. Please remove private targets, tokens, internal IPs, and customer data before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Netscope version
+      description: Output from `netscope version`.
+      placeholder: "netscope 0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The command you ran. Redact private targets if needed.
+      render: sh
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include relevant output. Redact private data.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include distro, architecture, WSL/container/VM/bare metal, and `netscope doctor` output.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, private targets, and customer data from this report.
+          required: true
