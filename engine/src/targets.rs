@@ -1,7 +1,7 @@
 use crate::types::{EngineRequest, Target};
 use std::collections::HashSet;
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 const MAX_HOSTS_PER_MEMORY_MB: usize = 4096;
 const MAX_SINGLE_EXPANSION: u64 = 1_000_000;
@@ -81,12 +81,19 @@ fn expand_cidr(spec: &str) -> Result<Vec<Target>, String> {
     let (base, prefix) = spec
         .split_once('/')
         .ok_or_else(|| format!("invalid CIDR {spec:?}"))?;
-    let base: Ipv4Addr = base
-        .parse()
-        .map_err(|_| format!("only IPv4 CIDR is supported in v1: {spec}"))?;
     let prefix: u32 = prefix
         .parse()
         .map_err(|_| format!("invalid CIDR prefix in {spec:?}"))?;
+    if let Ok(base) = base.parse::<Ipv4Addr>() {
+        return expand_ipv4_cidr(spec, base, prefix);
+    }
+    if let Ok(base) = base.parse::<Ipv6Addr>() {
+        return expand_ipv6_cidr(spec, base, prefix);
+    }
+    Err(format!("invalid CIDR base address in {spec:?}"))
+}
+
+fn expand_ipv4_cidr(spec: &str, base: Ipv4Addr, prefix: u32) -> Result<Vec<Target>, String> {
     if prefix > 32 {
         return Err(format!("invalid CIDR prefix in {spec:?}"));
     }
@@ -118,6 +125,35 @@ fn expand_cidr(spec: &str) -> Result<Vec<Target>, String> {
         out.push(Target {
             original: spec.into(),
             ip: IpAddr::V4(Ipv4Addr::from(value)),
+        });
+    }
+    Ok(out)
+}
+
+fn expand_ipv6_cidr(spec: &str, base: Ipv6Addr, prefix: u32) -> Result<Vec<Target>, String> {
+    if prefix > 128 {
+        return Err(format!("invalid CIDR prefix in {spec:?}"));
+    }
+    let base_num = u128::from(base);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix)
+    };
+    let network = base_num & mask;
+    let last = network | !mask;
+    let count = last.saturating_sub(network) + 1;
+    if count > u128::from(MAX_SINGLE_EXPANSION) {
+        return Err(format!(
+            "{spec} expands to {count} IPv6 addresses; use a smaller IPv6 scope or explicit targets"
+        ));
+    }
+
+    let mut out = Vec::new();
+    for value in network..=last {
+        out.push(Target {
+            original: spec.into(),
+            ip: IpAddr::V6(Ipv6Addr::from(value)),
         });
     }
     Ok(out)
@@ -190,5 +226,17 @@ mod tests {
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].ip.to_string(), "192.0.2.3");
         assert_eq!(out[2].ip.to_string(), "192.0.2.5");
+    }
+
+    #[test]
+    fn expands_small_ipv6_cidr() {
+        let out = expand_one("2001:db8::/126").unwrap();
+        let ips: Vec<String> = out.iter().map(|t| t.ip.to_string()).collect();
+        assert_eq!(ips, vec!["2001:db8::", "2001:db8::1", "2001:db8::2", "2001:db8::3"]);
+    }
+
+    #[test]
+    fn rejects_huge_ipv6_cidr() {
+        assert!(expand_one("2001:db8::/64").is_err());
     }
 }

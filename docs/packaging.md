@@ -14,8 +14,8 @@ ls dist/
 Install from a downloaded tarball:
 
 ```sh
-tar -xzf netscope_0.1.0_linux_amd64.tar.gz
-cd netscope_0.1.0_linux_amd64
+tar -xzf netscope_0.3.0-beta_linux_amd64.tar.gz
+cd netscope_0.3.0-beta_linux_amd64
 sh install.sh
 netscope doctor
 ```
@@ -32,7 +32,7 @@ Build a local `.deb`:
 
 ```sh
 make package-deb
-sudo apt install ./dist/netscope_0.1.0_amd64.deb
+sudo apt install ./dist/netscope_0.3.0-beta_amd64.deb
 netscope doctor
 ```
 
@@ -52,7 +52,7 @@ Build a local pacman package on Arch Linux:
 
 ```sh
 make package-arch
-sudo pacman -U dist/arch/netscope-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U dist/arch/netscope-0.3.0_beta-1-x86_64.pkg.tar.zst
 netscope doctor
 ```
 

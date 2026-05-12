@@ -2,11 +2,9 @@
 
 This guide explains how to publish Netscope so other Linux users can install it.
 
-Replace `whatarsal` with your real GitHub username or organization before the first public release.
-
 ## 1. Prepare Repository Metadata
 
-Update these placeholders:
+Before each public release, confirm repository metadata points to `saiyan566/netscope` or your chosen release repository:
 
 - `README.md`
 - `scripts/install-release.sh`
@@ -14,10 +12,10 @@ Update these placeholders:
 - `packaging/arch/PKGBUILD`
 - `.github/ISSUE_TEMPLATE/config.yml`
 
-Search for:
+Search for stale placeholders:
 
 ```sh
-grep -R "whatarsal" .
+grep -R "YOUR_GITHUB_USERNAME\\|whatarsal" .
 ```
 
 ## 2. Run Local Checks
@@ -32,8 +30,8 @@ make release
 Release artifacts are written to `dist/`:
 
 ```txt
-netscope_0.1.0_linux_amd64.tar.gz
-netscope_0.1.0_amd64.deb
+netscope_0.3.0-beta_linux_amd64.tar.gz
+netscope_0.3.0-beta_amd64.deb
 checksums.txt
 ```
 
@@ -51,8 +49,8 @@ git push -u origin main
 ## 4. Create a Release Tag
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.3.0-beta
+git push origin v0.3.0-beta
 ```
 
 The GitHub Actions release workflow builds artifacts and opens a draft GitHub Release.
@@ -76,8 +74,8 @@ curl -fsSL https://raw.githubusercontent.com/saiyan566/netscope/main/scripts/ins
 Debian/Ubuntu users can install the `.deb`:
 
 ```sh
-wget https://github.com/saiyan566/netscope/releases/download/v0.1.0/netscope_0.1.0_amd64.deb
-sudo apt install ./netscope_0.1.0_amd64.deb
+wget https://github.com/saiyan566/netscope/releases/download/v0.3.0-beta/netscope_0.3.0-beta_amd64.deb
+sudo apt install ./netscope_0.3.0-beta_amd64.deb
 ```
 
 ## 6. APT and Pacman Repositories
@@ -112,8 +110,8 @@ Start with GitHub Releases first, then add:
 
 For the next release:
 
-1. Update `version` in `cmd/netscope/main.go`.
-2. Update package versions in `packaging/arch/PKGBUILD`.
+1. Update `VERSION`, `version` in `cmd/netscope/main.go`, and `engine/Cargo.toml`.
+2. Update package versions in `packaging/arch/PKGBUILD` when needed.
 3. Update `CHANGELOG.md`.
 4. Run `VERSION=x.y.z make release`.
 5. Commit.

@@ -2,7 +2,7 @@
 set -eu
 
 REPO="${NETSCOPE_REPO:-saiyan566/netscope}"
-VERSION="${VERSION:-v0.1.0}"
+VERSION="${VERSION:-v0.3.0-beta}"
 PREFIX="${PREFIX:-}"
 
 case "$(uname -s)" in

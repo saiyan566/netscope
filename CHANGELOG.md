@@ -4,6 +4,25 @@ All notable changes to Netscope will be documented in this file.
 
 This project uses pre-1.0 semantic versioning. Breaking changes may occur in minor releases until `1.0.0`.
 
+## [0.3.0-beta] - 2026-05-11
+
+### Added
+
+- Workspace history commands for status, run listing/filtering, run summaries, stored assets, stored findings, report by run id, and diff by run id.
+- Beta TLS audit metadata for certificate chains, trust validation status, hostname mismatch status, expiry warnings, negotiated protocol, and negotiated cipher.
+- Passive recon source adapter regression coverage and isolated source-failure behavior.
+- `VERSION` file and CI rustfmt component setup for release hygiene.
+
+### Changed
+
+- Updated package defaults and documentation for the `0.3.0-beta` release line.
+- Improved TLS diff identity fields so TLS posture changes are easier to detect from JSONL.
+
+### Security
+
+- Preserved the defensive-only safety model: passive/local commands do not require `--ack-authorized`; active scans and active recon still do.
+- TLS audit remains safe handshake-level inspection only, with no brute force, exploit payloads, or evasion behavior.
+
 ## [0.1.0] - 2026-05-07
 
 ### Added

@@ -1,5 +1,5 @@
 pkgname=netscope
-pkgver=0.1.0
+pkgver=0.3.0_beta
 pkgrel=1
 pkgdesc="Defensive Linux CLI scanner with passive recon"
 arch=("x86_64" "aarch64")

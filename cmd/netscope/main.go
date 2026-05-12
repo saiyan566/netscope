@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.3.0-beta"
 
 type stringList []string
 
@@ -66,6 +66,9 @@ type engineRequest struct {
 	TimeoutMS        int      `json:"timeout_ms,omitempty"`
 	MemoryBudgetMB   int      `json:"memory_budget_mb,omitempty"`
 	SSHAudit         bool     `json:"ssh_audit,omitempty"`
+	ServiceDetect    bool     `json:"service_detect,omitempty"`
+	HTTPAudit        bool     `json:"http_audit,omitempty"`
+	TLSAudit         bool     `json:"tls_audit,omitempty"`
 	InputFile        string   `json:"input_file,omitempty"`
 	Subdomains       bool     `json:"subdomains,omitempty"`
 	Wordlist         string   `json:"wordlist,omitempty"`
@@ -89,6 +92,12 @@ type cliOptions struct {
 	format        string
 	jsonlOut      string
 	reportOut     string
+	profile       string
+	workspace     string
+	workspaceRun  *workspaceRunContext
+	failOn        string
+	quiet         bool
+	noColor       bool
 	dedupe        bool
 	ackAuthorized bool
 }
@@ -96,6 +105,10 @@ type cliOptions struct {
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		var exitErr exitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -180,6 +193,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runEgress(stdout)
 	case "doctor":
 		return runDoctor(stdout)
+	case "diff":
+		if hasHelpFlag(args[1:]) {
+			return printCommandHelp(stdout, "diff")
+		}
+		return runDiff(args[1:], stdout)
+	case "report":
+		if hasHelpFlag(args[1:]) {
+			return printCommandHelp(stdout, "report")
+		}
+		return runReport(args[1:], stdout)
+	case "dns-audit":
+		if hasHelpFlag(args[1:]) {
+			return printCommandHelp(stdout, "dns-audit")
+		}
+		return runDNSAudit(args[1:], stdout)
+	case "workspace":
+		return runWorkspaceCommand(args[1:], stdout)
+	case "sources":
+		return runSourcesCommand(args[1:], stdout)
 	case "self-update":
 		fmt.Fprintln(stdout, "self-update is wired into the CLI interface, but release hosting is not configured in this source build yet.")
 		return nil
@@ -325,6 +357,10 @@ func registerOutputFlags(fs *flag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.format, "format", "text", "output format: text or jsonl")
 	fs.StringVar(&opts.jsonlOut, "jsonl-out", "", "write raw JSONL events to this file")
 	fs.StringVar(&opts.reportOut, "report-out", "", "write readable output to a text/doc file")
+	fs.StringVar(&opts.workspace, "workspace", "", "persist this run in a local workspace")
+	fs.StringVar(&opts.failOn, "fail-on", "", "exit non-zero when a finding meets severity: low, medium, high, or critical")
+	fs.BoolVar(&opts.quiet, "quiet", false, "reduce stdout to findings, warnings, summaries, and errors")
+	fs.BoolVar(&opts.noColor, "no-color", false, "disable color output; accepted for CI compatibility")
 	fs.BoolVar(&opts.dedupe, "dedupe", true, "remove duplicate domains, subdomains, DNS records, IPs, CIDRs, ports, and findings")
 }
 
@@ -336,6 +372,7 @@ func registerPerformanceFlags(fs *flag.FlagSet, opts *cliOptions) {
 }
 
 func registerScanFlags(fs *flag.FlagSet, opts *cliOptions) {
+	fs.StringVar(&opts.profile, "profile", "", "scan profile: quick, standard, deep, external, or internal")
 	fs.BoolVar(&opts.request.TCP, "tcp", false, "enable TCP scanning")
 	fs.BoolVar(&opts.request.UDP, "udp", false, "enable UDP scanning")
 	fs.StringVar(&opts.request.Ports, "ports", "", "TCP ports, for example 22,80,443 or 1-1024")
@@ -343,6 +380,9 @@ func registerScanFlags(fs *flag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.request.TopPorts, "top-ports", 100, "number of common TCP ports to scan when --ports is omitted")
 	fs.IntVar(&opts.request.TopUDP, "top-udp", 20, "number of common UDP ports to scan when --udp-ports is omitted")
 	fs.BoolVar(&opts.request.SSHAudit, "ssh-audit", false, "perform safe SSH banner and posture checks")
+	fs.BoolVar(&opts.request.ServiceDetect, "service-detect", false, "perform safe banner and protocol handshake service detection")
+	fs.BoolVar(&opts.request.HTTPAudit, "http-audit", false, "perform safe HTTP posture checks on HTTP services")
+	fs.BoolVar(&opts.request.TLSAudit, "tls-audit", false, "perform safe TLS posture checks where supported")
 	fs.IntVar(&opts.request.UDPRetries, "udp-retries", 1, "UDP retry count")
 	registerPerformanceFlags(fs, opts)
 }
@@ -392,8 +432,11 @@ func (p *commandParser) finalize() error {
 	p.opts.request.Excludes = []string(p.excludes)
 	p.opts.request.DiscoveryMethods = splitCSV(p.methods)
 
-	if !p.opts.ackAuthorized {
-		return errors.New("active scan commands require --ack-authorized for owned or explicitly permitted assets")
+	if err := applyConfigAndProfiles(p); err != nil {
+		return err
+	}
+	if p.opts.request.Command == "recon" {
+		p.applyReconSpecificModes()
 	}
 	if p.opts.request.TargetFile == "" && len(p.opts.request.Targets) == 0 && p.opts.request.InputFile == "" {
 		return errors.New("provide --target, --target-file, or --input")
@@ -404,8 +447,11 @@ func (p *commandParser) finalize() error {
 	if p.opts.format != "text" && p.opts.format != "jsonl" {
 		return errors.New("--format must be text or jsonl")
 	}
-	if p.opts.request.Command == "recon" {
-		p.applyReconSpecificModes()
+	if p.opts.failOn != "" && severityRank(p.opts.failOn) == 0 {
+		return errors.New("--fail-on must be low, medium, high, or critical")
+	}
+	if err := enforceSafety(p.opts); err != nil {
+		return err
 	}
 	return nil
 }
@@ -443,9 +489,15 @@ type cliEventWriter struct {
 	stdout     io.Writer
 	rawFile    *os.File
 	reportFile *os.File
+	storeFile  *os.File
 	jsonl      bool
 	dedupe     bool
 	cidrOnly   bool
+	quiet      bool
+	failOn     string
+	maxFinding int
+	counts     map[string]int
+	summary    string
 	seen       map[string]bool
 }
 
@@ -539,6 +591,9 @@ func newCLIEventWriter(opts cliOptions, stdout io.Writer) (*cliEventWriter, erro
 		jsonl:    opts.format == "jsonl",
 		dedupe:   opts.dedupe,
 		cidrOnly: opts.request.CIDRRanges,
+		quiet:    opts.quiet,
+		failOn:   opts.failOn,
+		counts:   map[string]int{},
 		seen:     map[string]bool{},
 	}
 	if opts.jsonlOut != "" {
@@ -560,6 +615,14 @@ func newCLIEventWriter(opts cliOptions, stdout io.Writer) (*cliEventWriter, erro
 			return nil, err
 		}
 	}
+	if opts.workspaceRun != nil {
+		file, err := os.Create(opts.workspaceRun.JSONLPath)
+		if err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+		writer.storeFile = file
+	}
 	return writer, nil
 }
 
@@ -570,6 +633,9 @@ func (w *cliEventWriter) Close() error {
 	}
 	if w.reportFile != nil {
 		closeErr = errors.Join(closeErr, w.reportFile.Close())
+	}
+	if w.storeFile != nil {
+		closeErr = errors.Join(closeErr, w.storeFile.Close())
 	}
 	return closeErr
 }
@@ -582,10 +648,20 @@ func (w *cliEventWriter) Emit(event map[string]any) error {
 	return w.EmitRaw(line)
 }
 
+func emitSafetyMode(writer *cliEventWriter, request engineRequest) error {
+	decision := evaluateSafety(request)
+	return writer.Emit(map[string]any{
+		"type":    "mode",
+		"mode":    string(decision.Mode),
+		"message": decision.Reason,
+	})
+}
+
 func (w *cliEventWriter) EmitRaw(line []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	w.observeEvent(line)
 	if w.cidrOnly && !cidrRangeModeEvent(line) {
 		return nil
 	}
@@ -602,6 +678,11 @@ func (w *cliEventWriter) EmitRaw(line []byte) error {
 			return err
 		}
 	}
+	if w.storeFile != nil {
+		if _, err := w.storeFile.Write(append(append([]byte{}, line...), '\n')); err != nil {
+			return err
+		}
+	}
 	if w.reportFile != nil {
 		if _, err := fmt.Fprintln(w.reportFile, renderEventLine(line)); err != nil {
 			return err
@@ -611,7 +692,56 @@ func (w *cliEventWriter) EmitRaw(line []byte) error {
 		fmt.Fprintln(w.stdout, string(line))
 		return nil
 	}
+	if w.quiet && !quietModeEvent(line) {
+		return nil
+	}
 	renderEvent(w.stdout, line)
+	return nil
+}
+
+func (w *cliEventWriter) observeEvent(line []byte) {
+	var event map[string]any
+	if err := json.Unmarshal(line, &event); err != nil {
+		return
+	}
+	eventType := text(event, "type")
+	if eventType != "" {
+		w.counts[eventType]++
+	}
+	if eventType == "summary" {
+		w.summary = text(event, "message")
+	}
+	if eventType == "finding" {
+		if rank := severityRank(text(event, "severity")); rank > w.maxFinding {
+			w.maxFinding = rank
+		}
+	}
+}
+
+func (w *cliEventWriter) findingCount() int {
+	return w.counts["finding"]
+}
+
+func (w *cliEventWriter) maxSeverityName() string {
+	if w.maxFinding == 0 {
+		return ""
+	}
+	for _, severity := range []string{"critical", "high", "medium", "low"} {
+		if severityRank(severity) == w.maxFinding {
+			return severity
+		}
+	}
+	return ""
+}
+
+func (w *cliEventWriter) failOnError() error {
+	if w.failOn == "" {
+		return nil
+	}
+	threshold := severityRank(w.failOn)
+	if threshold > 0 && w.maxFinding >= threshold {
+		return exitError{Code: 3, Err: fmt.Errorf("findings met --fail-on %s threshold", w.failOn)}
+	}
 	return nil
 }
 
@@ -621,19 +751,45 @@ func cidrRangeModeEvent(line []byte) bool {
 		return true
 	}
 	switch text(event, "type") {
-	case "cidr", "cidr_ip", "live_ip", "warning", "summary", "error":
+	case "mode", "cidr", "cidr_ip", "live_ip", "warning", "summary", "error":
 		return true
 	default:
 		return false
 	}
 }
 
-func runPassiveRecon(opts cliOptions, stdout, stderr io.Writer) error {
+func quietModeEvent(line []byte) bool {
+	var event map[string]any
+	if err := json.Unmarshal(line, &event); err != nil {
+		return true
+	}
+	switch text(event, "type") {
+	case "finding", "warning", "summary", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func runPassiveRecon(opts cliOptions, stdout, stderr io.Writer) (err error) {
+	workspaceRun, err := beginWorkspaceRun(opts)
+	if err != nil {
+		return err
+	}
+	opts.workspaceRun = workspaceRun
 	writer, err := newCLIEventWriter(opts, stdout)
 	if err != nil {
 		return err
 	}
 	defer writer.Close()
+	defer func() {
+		if workspaceRun != nil {
+			err = errors.Join(err, finishWorkspaceRun(workspaceRun, writer, err))
+		}
+	}()
+	if err := emitSafetyMode(writer, opts.request); err != nil {
+		return err
+	}
 
 	scopes, ipObjects, err := collectReconInputs(opts.request)
 	if err != nil {
@@ -778,7 +934,7 @@ func runPassiveRecon(opts cliOptions, stdout, stderr io.Writer) error {
 		"type":    "summary",
 		"message": summary,
 	})
-	return nil
+	return writer.failOnError()
 }
 
 func collectReconInputs(request engineRequest) ([]reconScope, []string, error) {
@@ -976,41 +1132,28 @@ func retryableStatus(status int) bool {
 }
 
 func collectPassiveSubdomains(client *http.Client, writer *cliEventWriter, domain string, sources map[string]bool, subdomainSources map[string]map[string]bool, addressHints map[string]map[string]bool, sourceLimit int) {
-	collectors := []struct {
-		name string
-		run  func(*http.Client, string, int) (passiveSourceResult, error)
-	}{
-		{"crtsh", func(client *http.Client, domain string, _ int) (passiveSourceResult, error) {
-			names, err := fetchCRTSubdomains(client, domain)
-			return passiveSourceResult{Subdomains: names}, err
-		}},
-		{"certspotter", fetchCertSpotterSubdomains},
-		{"hackertarget", fetchHackerTargetSubdomains},
-		{"threatminer", fetchThreatMinerSubdomains},
-		{"wayback", fetchWaybackSubdomains},
-		{"anubis", fetchAnubisSubdomains},
-		{"subdomain-center", fetchSubdomainCenterSubdomains},
-		{"urlscan", fetchURLScanSubdomains},
-	}
+	collectPassiveSubdomainsWithAdapters(client, writer, domain, sources, subdomainSources, addressHints, sourceLimit, builtInPassiveSources())
+}
 
+func collectPassiveSubdomainsWithAdapters(client *http.Client, writer *cliEventWriter, domain string, sources map[string]bool, subdomainSources map[string]map[string]bool, addressHints map[string]map[string]bool, sourceLimit int, adapters []passiveSourceAdapter) {
 	type sourceOutcome struct {
 		name   string
 		result passiveSourceResult
 		err    error
 	}
 
-	outcomes := make(chan sourceOutcome, len(collectors))
+	outcomes := make(chan sourceOutcome, len(adapters))
 	var wg sync.WaitGroup
-	for _, collector := range collectors {
-		if !sources[collector.name] {
+	for _, adapter := range adapters {
+		if !sources[adapter.Name()] {
 			continue
 		}
 		wg.Add(1)
-		go func(name string, run func(*http.Client, string, int) (passiveSourceResult, error)) {
+		go func(source passiveSourceAdapter) {
 			defer wg.Done()
-			result, err := run(client, domain, sourceLimit)
-			outcomes <- sourceOutcome{name: name, result: result, err: err}
-		}(collector.name, collector.run)
+			result, err := source.Fetch(client, domain, sourceLimit)
+			outcomes <- sourceOutcome{name: source.Name(), result: result, err: err}
+		}(adapter)
 	}
 	wg.Wait()
 	close(outcomes)
@@ -1844,18 +1987,12 @@ func sourceSet(values []string) map[string]bool {
 }
 
 func defaultReconSources() []string {
-	return []string{
-		"crtsh",
-		"certspotter",
-		"hackertarget",
-		"threatminer",
-		"wayback",
-		"anubis",
-		"subdomain-center",
-		"urlscan",
-		"dns-google",
-		"rdap",
+	values := make([]string, 0, len(builtInPassiveSources())+2)
+	for _, source := range builtInPassiveSources() {
+		values = append(values, source.Name())
 	}
+	values = append(values, "dns-google", "rdap")
+	return values
 }
 
 func keysOfSourceSet(values map[string]bool) []string {
@@ -1887,7 +2024,7 @@ func reconRecordTypes(records string) []string {
 	if len(values) == 0 {
 		values = []string{"A", "AAAA", "CNAME", "MX", "NS", "TXT"}
 	}
-	allowed := map[string]bool{"A": true, "AAAA": true, "CNAME": true, "MX": true, "NS": true, "TXT": true}
+	allowed := map[string]bool{"A": true, "AAAA": true, "CNAME": true, "MX": true, "NS": true, "TXT": true, "CAA": true}
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		key := strings.ToUpper(value)
@@ -1915,6 +2052,8 @@ func dnsTypeName(value int) string {
 		return "TXT"
 	case 28:
 		return "AAAA"
+	case 257:
+		return "CAA"
 	default:
 		return fmt.Sprintf("TYPE%d", value)
 	}
@@ -1964,7 +2103,7 @@ func reconSeedMessage(scope reconScope) string {
 	return fmt.Sprintf("using %s as passive recon root; seed hosts: %s", scope.Domain, strings.Join(seeds, ","))
 }
 
-func runEngine(opts cliOptions, stdout, stderr io.Writer) error {
+func runEngine(opts cliOptions, stdout, stderr io.Writer) (err error) {
 	enginePath, err := findEngine()
 	if err != nil {
 		return err
@@ -1987,16 +2126,28 @@ func runEngine(opts cliOptions, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if err := cmd.Start(); err != nil {
+	workspaceRun, err := beginWorkspaceRun(opts)
+	if err != nil {
 		return err
 	}
-
+	opts.workspaceRun = workspaceRun
 	writer, err := newCLIEventWriter(opts, stdout)
 	if err != nil {
-		_ = cmd.Process.Kill()
 		return err
 	}
 	defer writer.Close()
+	defer func() {
+		if workspaceRun != nil {
+			err = errors.Join(err, finishWorkspaceRun(workspaceRun, writer, err))
+		}
+	}()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := emitSafetyMode(writer, opts.request); err != nil {
+		_ = cmd.Process.Kill()
+		return err
+	}
 
 	scanner := bufio.NewScanner(pipe)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -2010,7 +2161,10 @@ func runEngine(opts cliOptions, stdout, stderr io.Writer) error {
 		_ = cmd.Process.Kill()
 		return err
 	}
-	return cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return writer.failOnError()
 }
 
 func renderEvent(stdout io.Writer, line []byte) {
@@ -2033,6 +2187,8 @@ func renderEventLine(line []byte) string {
 func renderEventLineFromMap(event map[string]any, line []byte) string {
 	eventType, _ := event["type"].(string)
 	switch eventType {
+	case "mode":
+		return fmt.Sprintf("[mode] %-7s %s", text(event, "mode"), text(event, "message"))
 	case "progress":
 		return fmt.Sprintf("[progress] %s", text(event, "message"))
 	case "host":
@@ -2041,6 +2197,12 @@ func renderEventLineFromMap(event map[string]any, line []byte) string {
 		return fmt.Sprintf("[port] %-3s %-13s %-5s/%s %s", text(event, "state"), text(event, "resolved_ip"), number(event, "port"), text(event, "transport"), text(event, "reason"))
 	case "service":
 		return fmt.Sprintf("[service] %-15s %-5s/%s %-10s %s", text(event, "resolved_ip"), number(event, "port"), text(event, "transport"), text(event, "service"), text(event, "banner"))
+	case "http_audit":
+		return fmt.Sprintf("[http] %-15s %-5s status=%s server=%s title=%s", text(event, "resolved_ip"), number(event, "port"), number(event, "status_code"), text(event, "server"), text(event, "title"))
+	case "tls":
+		return fmt.Sprintf("[tls] %-15s %-5s %s", text(event, "resolved_ip"), number(event, "port"), text(event, "evidence"))
+	case "dns_posture":
+		return fmt.Sprintf("[dns-posture] %s spf=%s dmarc=%s caa=%s ns=%s mx=%s", text(event, "domain"), valueString(event, "spf_present"), text(event, "dmarc_policy"), valueString(event, "caa_present"), number(event, "ns_count"), number(event, "mx_count"))
 	case "domain":
 		return fmt.Sprintf("[domain] %s resolver=%s", text(event, "domain"), text(event, "resolver"))
 	case "dns_record":
@@ -2128,6 +2290,19 @@ func number(event map[string]any, key string) string {
 		return fmt.Sprintf("%.0f", value)
 	case string:
 		return value
+	default:
+		return ""
+	}
+}
+
+func valueString(event map[string]any, key string) string {
+	switch value := event[key].(type) {
+	case string:
+		return value
+	case bool:
+		return strconv.FormatBool(value)
+	case float64:
+		return fmt.Sprintf("%.0f", value)
 	default:
 		return ""
 	}
@@ -2239,7 +2414,7 @@ func runDoctor(stdout io.Writer) error {
 	} else {
 		fmt.Fprintln(stdout, "setcap=missing optional privileged scan setup is not available from PATH")
 	}
-	fmt.Fprintln(stdout, "safety=active scan commands require --ack-authorized")
+	fmt.Fprintln(stdout, "safety=passive/local commands do not require --ack-authorized; active probes do")
 	return nil
 }
 
@@ -2257,6 +2432,11 @@ Commands:
   scan        TCP/UDP scan with optional host discovery and SSH audit
   recon       Passive domain, subdomain, IP, and CIDR recon from public sources
   vuln        Remediation-first checks from live targets or prior JSONL
+  diff        Compare old and new JSONL result files
+  report      Generate text, JSON, Markdown, HTML, CSV, or SARIF reports
+  dns-audit   Passive DNS posture audit from public resolver data
+  workspace   Manage local SQLite workspaces and scan history
+  sources     List passive recon source adapters
   egress      Show current public egress IP and runtime context
   doctor      Verify install, engine path, and optional capabilities
   self-update Placeholder command for future release updates
@@ -2265,21 +2445,107 @@ Commands:
 Examples:
   netscope discover --target 192.0.2.0/24 --ack-authorized
   netscope scan --target example.com --tcp --ports 22,80,443 --ssh-audit --ack-authorized
-  netscope recon --target www.arkoselabs.com --max-subdomains 100 --ack-authorized
-  netscope recon --cidr_ranges --target example.com --ack-authorized
+  netscope recon --target www.arkoselabs.com --max-subdomains 100
+  netscope recon --cidr_ranges --target example.com
   netscope recon --cidr_ranges --live-ips --target example.com --max-live-ips 256 --ack-authorized
-  netscope recon --target example.com --sources dns-google,rdap --expand-cidrs --max-cidr-ips 1024 --ack-authorized
-  netscope recon --target example.com --report-out recon.txt --ack-authorized
-  netscope vuln --input scan.jsonl --ack-authorized
+  netscope recon --target example.com --sources dns-google,rdap --expand-cidrs --max-cidr-ips 1024
+  netscope recon --target example.com --report-out recon.txt
+  netscope vuln --input scan.jsonl
+  netscope diff --old old.jsonl --new new.jsonl
+  netscope report --input scan.jsonl --format html --out report.html
+  netscope dns-audit --target example.com
+  netscope workspace init acme
+  netscope sources list
 
 Use "netscope help scan" or "netscope recon --help" for command-specific flags.
-Active scanning is for owned or explicitly authorized assets only.
+Passive/local commands do not require --ack-authorized. Active probes do.
 `, version)
 }
 
 func printCommandHelp(stdout io.Writer, command string) error {
 	parser := newCommandParser(command)
 	if parser.fs == nil {
+		switch command {
+		case "diff":
+			fmt.Fprintf(stdout, `netscope diff
+
+Usage:
+  netscope diff --old old.jsonl --new new.jsonl [flags]
+
+Examples:
+  netscope diff --old yesterday.jsonl --new today.jsonl
+  netscope diff --old old.jsonl --new new.jsonl --format json --out changes.json
+
+Flags:
+  --old string
+      old scan/recon JSONL file
+  --new string
+      new scan/recon JSONL file
+  --format string
+      diff format: text or json (default "text")
+  --out string
+      write diff to this file
+
+Passive/local commands do not require --ack-authorized. Active probes do.
+`)
+			return nil
+		case "report":
+			fmt.Fprintf(stdout, `netscope report
+
+Usage:
+  netscope report --input scan.jsonl --format markdown --out report.md [flags]
+
+Examples:
+  netscope report --input scan.jsonl --format html --out report.html
+  netscope report --input scan.jsonl --format csv --out report.csv
+  netscope report --input scan.jsonl --format sarif --out report.sarif
+
+Flags:
+  --input string
+      scan or recon JSONL input
+  --format string
+      report format: text, json, jsonl, markdown, html, csv, or sarif (default "markdown")
+  --out string
+      write report to this file
+
+Passive/local commands do not require --ack-authorized. Active probes do.
+`)
+			return nil
+		case "dns-audit":
+			fmt.Fprintf(stdout, `netscope dns-audit
+
+Usage:
+  netscope dns-audit --target example.com [flags]
+
+Examples:
+  netscope dns-audit --target example.com
+  netscope dns-audit --target example.com --records A,AAAA,MX,NS,TXT,CAA --jsonl-out dns.jsonl
+
+Flags:
+  --target string
+      domain to audit; repeatable or comma-separated
+  --records string
+      DNS record types to collect (default "A,AAAA,CNAME,MX,NS,TXT,CAA")
+  --timeout-ms int
+      public resolver timeout in milliseconds (default 5000)
+  --format string
+      output format: text or jsonl (default "text")
+  --jsonl-out string
+      write raw JSONL events to this file
+  --report-out string
+      write readable output to this file
+  --dedupe
+      remove duplicate DNS posture events
+
+Passive/local commands do not require --ack-authorized. Active probes do.
+`)
+			return nil
+		case "workspace":
+			printWorkspaceHelp(stdout)
+			return nil
+		case "sources":
+			return runSourcesCommand([]string{"--help"}, stdout)
+		}
 		return fmt.Errorf("unknown help topic %q", command)
 	}
 	parser.fs.SetOutput(stdout)
@@ -2314,17 +2580,17 @@ Flags:
 		fmt.Fprintf(stdout, `netscope recon
 
 Usage:
-  netscope recon --target example.com --ack-authorized [flags]
+  netscope recon --target example.com [flags]
 
 Examples:
-  netscope recon --target www.arkoselabs.com --ack-authorized
-  netscope recon --cidr_ranges --target example.com --ack-authorized
+  netscope recon --target www.arkoselabs.com
+  netscope recon --cidr_ranges --target example.com
   netscope recon --cidr_ranges --live-ips --target example.com --live-ip-ports 80,443,22 --max-live-ips 256 --ack-authorized
-  netscope recon --target example.com --sources anubis,urlscan,dns-google,rdap --max-subdomains 200 --ack-authorized
-  netscope recon --target example.com --sources dns-google,rdap --records A,AAAA --expand-cidrs --max-cidr-ips 1024 --ack-authorized
-  netscope recon --target example.com --report-out recon.txt --ack-authorized
-  netscope recon --target example.com --report-out recon.doc --jsonl-out recon.jsonl --ack-authorized
-  netscope recon --target 8.8.8.8 --max-ips 20 --ack-authorized
+  netscope recon --target example.com --sources anubis,urlscan,dns-google,rdap --max-subdomains 200
+  netscope recon --target example.com --sources dns-google,rdap --records A,AAAA --expand-cidrs --max-cidr-ips 1024
+  netscope recon --target example.com --report-out recon.txt
+  netscope recon --target example.com --report-out recon.doc --jsonl-out recon.jsonl
+  netscope recon --target 8.8.8.8 --max-ips 20
 
 Flags:
 `)
@@ -2332,11 +2598,11 @@ Flags:
 		fmt.Fprintf(stdout, `netscope vuln
 
 Usage:
-  netscope vuln --input scan.jsonl --ack-authorized [flags]
+  netscope vuln --input scan.jsonl [flags]
   netscope vuln --target example.com --ack-authorized [flags]
 
 Examples:
-  netscope vuln --input scan.jsonl --ack-authorized
+  netscope vuln --input scan.jsonl
   netscope vuln --target example.com --ports 22,80,443 --ack-authorized
 
 Flags:
@@ -2347,7 +2613,7 @@ Flags:
 
 	printFlagDefaults(stdout, parser.fs)
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Active scanning is for owned or explicitly authorized assets only.")
+	fmt.Fprintln(stdout, "Passive/local commands do not require --ack-authorized. Active probes do.")
 	return nil
 }
 

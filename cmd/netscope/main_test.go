@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +18,140 @@ func TestParseRequiresAuthorization(t *testing.T) {
 	_, err := parseEngineCommand("scan", []string{"--target", "192.0.2.1"})
 	if err == nil {
 		t.Fatal("expected active scan without --ack-authorized to fail")
+	}
+}
+
+func TestParsePassiveReconDoesNotRequireAuthorization(t *testing.T) {
+	opts, err := parseEngineCommand("recon", []string{"--target", "example.com"})
+	if err != nil {
+		t.Fatalf("passive recon should not require --ack-authorized: %v", err)
+	}
+	decision := evaluateSafety(opts.request)
+	if decision.Mode != safetyPassive || decision.RequiresAck {
+		t.Fatalf("expected passive no-ack decision, got %#v", decision)
+	}
+}
+
+func TestParseCIDRReconDoesNotRequireAuthorization(t *testing.T) {
+	opts, err := parseEngineCommand("recon", []string{"--target", "example.com", "--cidr-ranges"})
+	if err != nil {
+		t.Fatalf("passive CIDR recon should not require --ack-authorized: %v", err)
+	}
+	decision := evaluateSafety(opts.request)
+	if decision.Mode != safetyPassive || decision.RequiresAck {
+		t.Fatalf("expected passive CIDR decision, got %#v", decision)
+	}
+}
+
+func TestParseLiveIPsRequiresAuthorization(t *testing.T) {
+	_, err := parseEngineCommand("recon", []string{"--target", "example.com", "--live-ips"})
+	if err == nil || !strings.Contains(err.Error(), "--ack-authorized") {
+		t.Fatalf("expected active live IP recon to require --ack-authorized, got %v", err)
+	}
+}
+
+func TestParseDiscoverRequiresAuthorization(t *testing.T) {
+	_, err := parseEngineCommand("discover", []string{"--target", "192.0.2.0/24"})
+	if err == nil || !strings.Contains(err.Error(), "--ack-authorized") {
+		t.Fatalf("expected discovery to require --ack-authorized, got %v", err)
+	}
+}
+
+func TestParseLocalVulnInputDoesNotRequireAuthorization(t *testing.T) {
+	opts, err := parseEngineCommand("vuln", []string{"--input", "scan.jsonl"})
+	if err != nil {
+		t.Fatalf("local vuln input should not require --ack-authorized: %v", err)
+	}
+	decision := evaluateSafety(opts.request)
+	if decision.Mode != safetyLocal || decision.RequiresAck {
+		t.Fatalf("expected local vuln decision, got %#v", decision)
+	}
+}
+
+func TestParseLiveVulnRequiresAuthorization(t *testing.T) {
+	_, err := parseEngineCommand("vuln", []string{"--target", "example.com", "--ports", "80"})
+	if err == nil || !strings.Contains(err.Error(), "--ack-authorized") {
+		t.Fatalf("expected live vuln mode to require --ack-authorized, got %v", err)
+	}
+}
+
+func TestSafetyAcceptanceCommandMatrix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake engine script uses POSIX shell")
+	}
+	fakeEngine := filepath.Join(t.TempDir(), "netscope-engine")
+	if err := os.WriteFile(fakeEngine, []byte("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"summary\",\"message\":\"fake engine ok\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write fake engine failed: %v", err)
+	}
+	t.Setenv("NETSCOPE_ENGINE", fakeEngine)
+	t.Setenv("NETSCOPE_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+
+	cases := []struct {
+		name      string
+		args      []string
+		wantError bool
+		contains  string
+	}{
+		{
+			name:     "passive recon without ack succeeds",
+			args:     []string{"recon", "--target", "192.0.2.1", "--no-resolve", "--no-rdap", "--timeout-ms", "100"},
+			contains: "[mode] PASSIVE",
+		},
+		{
+			name:     "dns audit without ack succeeds",
+			args:     []string{"dns-audit", "--target", "not_a_valid_domain", "--timeout-ms", "100"},
+			contains: "[mode] PASSIVE",
+		},
+		{
+			name:     "doctor without ack succeeds",
+			args:     []string{"doctor"},
+			contains: "netscope=",
+		},
+		{
+			name:     "egress without ack succeeds",
+			args:     []string{"egress"},
+			contains: "os=",
+		},
+		{
+			name:      "active recon without ack fails",
+			args:      []string{"recon", "--target", "127.0.0.1/32", "--live-ips", "--no-resolve", "--no-rdap"},
+			wantError: true,
+			contains:  "--ack-authorized",
+		},
+		{
+			name:      "active scan without ack fails",
+			args:      []string{"scan", "--target", "127.0.0.1", "--ports", "1", "--timeout-ms", "100"},
+			wantError: true,
+			contains:  "--ack-authorized",
+		},
+		{
+			name:     "active recon with ack succeeds",
+			args:     []string{"recon", "--target", "127.0.0.1/32", "--live-ips", "--no-resolve", "--no-rdap", "--timeout-ms", "100", "--concurrency", "1", "--ack-authorized"},
+			contains: "[mode] ACTIVE",
+		},
+		{
+			name:     "active scan with ack succeeds",
+			args:     []string{"scan", "--target", "127.0.0.1", "--ports", "1", "--timeout-ms", "100", "--ack-authorized"},
+			contains: "[mode] ACTIVE",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(tc.args, &stdout, &stderr)
+			combined := stdout.String() + stderr.String()
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("expected error, output: %s", combined)
+				}
+				combined += err.Error()
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v output=%s", err, combined)
+			}
+			if !strings.Contains(combined, tc.contains) {
+				t.Fatalf("expected %q in output/error, got: %s", tc.contains, combined)
+			}
+		})
 	}
 }
 
@@ -37,6 +174,70 @@ func TestParseRepeatedTargetsAndExcludes(t *testing.T) {
 	}
 }
 
+func TestScanProfileAppliesDefaults(t *testing.T) {
+	t.Setenv("NETSCOPE_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	opts, err := parseEngineCommand("scan", []string{
+		"--target", "192.0.2.1",
+		"--profile", "quick",
+		"--ack-authorized",
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if opts.profile != "quick" {
+		t.Fatalf("expected quick profile, got %q", opts.profile)
+	}
+	if !opts.request.TCP || opts.request.UDP {
+		t.Fatalf("expected quick profile to enable TCP only, got tcp=%v udp=%v", opts.request.TCP, opts.request.UDP)
+	}
+	if opts.request.TopPorts != 25 || opts.request.TimeoutMS != 700 || opts.request.Concurrency != 128 {
+		t.Fatalf("unexpected quick profile defaults: top=%d timeout=%d concurrency=%d", opts.request.TopPorts, opts.request.TimeoutMS, opts.request.Concurrency)
+	}
+}
+
+func TestConfigDefaultsAndCLIOverride(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`
+default_profile = "standard"
+timeout_ms = 2500
+concurrency = 64
+enabled_passive_sources = ["dns-google", "rdap"]
+`), 0o600); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+	t.Setenv("NETSCOPE_CONFIG", configPath)
+
+	scanOpts, err := parseEngineCommand("scan", []string{
+		"--target", "192.0.2.1",
+		"--timeout-ms", "1000",
+		"--ack-authorized",
+	})
+	if err != nil {
+		t.Fatalf("scan parse failed: %v", err)
+	}
+	if scanOpts.profile != "standard" {
+		t.Fatalf("expected config default profile, got %q", scanOpts.profile)
+	}
+	if scanOpts.request.TimeoutMS != 1000 {
+		t.Fatalf("expected CLI timeout override, got %d", scanOpts.request.TimeoutMS)
+	}
+	if scanOpts.request.Concurrency != 64 {
+		t.Fatalf("expected config concurrency, got %d", scanOpts.request.Concurrency)
+	}
+	if !scanOpts.request.TCP || !scanOpts.request.UDP || !scanOpts.request.SSHAudit {
+		t.Fatalf("expected standard profile defaults, got tcp=%v udp=%v ssh=%v", scanOpts.request.TCP, scanOpts.request.UDP, scanOpts.request.SSHAudit)
+	}
+
+	reconOpts, err := parseEngineCommand("recon", []string{"--target", "example.com"})
+	if err != nil {
+		t.Fatalf("recon parse failed: %v", err)
+	}
+	if reconOpts.request.Sources != "dns-google,rdap" {
+		t.Fatalf("expected config passive sources, got %q", reconOpts.request.Sources)
+	}
+}
+
 func TestSplitCSV(t *testing.T) {
 	values := splitCSV("arp, icmp,,tcp")
 	if len(values) != 3 {
@@ -44,6 +245,59 @@ func TestSplitCSV(t *testing.T) {
 	}
 	if values[1] != "icmp" {
 		t.Fatalf("expected trimmed value, got %q", values[1])
+	}
+}
+
+func TestDNSAuditHelpers(t *testing.T) {
+	if got := extractDMARCPolicy("v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com"); got != "quarantine" {
+		t.Fatalf("unexpected DMARC policy: %q", got)
+	}
+	if got := normalizeAuditDomain("https://WWW.Example.COM/login"); got != "www.example.com" {
+		t.Fatalf("unexpected normalized domain: %q", got)
+	}
+}
+
+func TestPassiveSourceAdaptersBackDefaultSources(t *testing.T) {
+	adapters := builtInPassiveSources()
+	if len(adapters) < 5 {
+		t.Fatalf("expected built-in passive adapters, got %d", len(adapters))
+	}
+	defaults := strings.Join(defaultReconSources(), ",")
+	for _, source := range adapters {
+		if source.Name() == "" || source.Category() == "" {
+			t.Fatalf("source metadata is incomplete: %#v", source)
+		}
+		if !strings.Contains(defaults, source.Name()) {
+			t.Fatalf("default sources do not include adapter %q in %q", source.Name(), defaults)
+		}
+	}
+}
+
+func TestPassiveSourceFailureIsolation(t *testing.T) {
+	var out bytes.Buffer
+	writer, err := newCLIEventWriter(cliOptions{format: "text", dedupe: true}, &out)
+	if err != nil {
+		t.Fatalf("writer setup failed: %v", err)
+	}
+	defer writer.Close()
+
+	sources := map[string]bool{"ok": true, "bad": true}
+	subdomains := map[string]map[string]bool{}
+	hints := map[string]map[string]bool{}
+	adapters := []passiveSourceAdapter{
+		passiveSourceFunc{name: "ok", category: "test", fetch: func(*http.Client, string, int) (passiveSourceResult, error) {
+			return passiveSourceResult{Subdomains: []string{"api.example.com"}}, nil
+		}},
+		passiveSourceFunc{name: "bad", category: "test", fetch: func(*http.Client, string, int) (passiveSourceResult, error) {
+			return passiveSourceResult{}, errors.New("source down")
+		}},
+	}
+	collectPassiveSubdomainsWithAdapters(&http.Client{}, writer, "example.com", sources, subdomains, hints, 10, adapters)
+	if !subdomains["api.example.com"]["ok"] {
+		t.Fatalf("expected successful source result, got %#v", subdomains)
+	}
+	if !strings.Contains(out.String(), "passive source failures") {
+		t.Fatalf("expected isolated failure warning, got %s", out.String())
 	}
 }
 
@@ -156,7 +410,6 @@ func TestParseCIDRRangesDefaultsToOnlyDNSAndRDAP(t *testing.T) {
 	opts, err := parseEngineCommand("recon", []string{
 		"--target", "www.example.com",
 		"--cidr-ranges",
-		"--ack-authorized",
 	})
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -172,7 +425,6 @@ func TestParseCIDRRangesDefaultsToOnlyDNSAndRDAP(t *testing.T) {
 func TestParseDefaultReconKeepsBroadSourcesAndSubdomains(t *testing.T) {
 	opts, err := parseEngineCommand("recon", []string{
 		"--target", "example.com",
-		"--ack-authorized",
 	})
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -284,6 +536,34 @@ func TestCLIEventWriterWritesReportAndDedupes(t *testing.T) {
 	}
 }
 
+func TestCLIEventWriterFailOnThreshold(t *testing.T) {
+	var out bytes.Buffer
+	writer, err := newCLIEventWriter(cliOptions{
+		format: "text",
+		failOn: "high",
+	}, &out)
+	if err != nil {
+		t.Fatalf("writer setup failed: %v", err)
+	}
+	if err := writer.Emit(map[string]any{"type": "finding", "severity": "medium", "title": "medium risk"}); err != nil {
+		t.Fatalf("emit failed: %v", err)
+	}
+	if err := writer.failOnError(); err != nil {
+		t.Fatalf("medium finding should not fail high threshold: %v", err)
+	}
+	if err := writer.Emit(map[string]any{"type": "finding", "severity": "high", "title": "high risk"}); err != nil {
+		t.Fatalf("emit failed: %v", err)
+	}
+	err = writer.failOnError()
+	if err == nil {
+		t.Fatal("expected high finding to fail high threshold")
+	}
+	var exitErr exitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 3 {
+		t.Fatalf("expected policy exit code 3, got %v", err)
+	}
+}
+
 func TestCIDRRangeModeWriterFiltersNonCIDREvents(t *testing.T) {
 	var out bytes.Buffer
 	writer, err := newCLIEventWriter(cliOptions{
@@ -296,6 +576,7 @@ func TestCIDRRangeModeWriterFiltersNonCIDREvents(t *testing.T) {
 	}
 
 	events := []map[string]any{
+		{"type": "mode", "mode": "PASSIVE", "message": "passive recon uses public sources"},
 		{"type": "domain", "domain": "example.com", "resolver": "public-sources"},
 		{"type": "dns_record", "name": "example.com", "record_type": "A", "value": "192.0.2.1"},
 		{"type": "ip_asset", "ip": "192.0.2.1", "name": "example.com", "source": "dns-google"},
@@ -313,8 +594,8 @@ func TestCIDRRangeModeWriterFiltersNonCIDREvents(t *testing.T) {
 	if strings.Contains(text, "[domain]") || strings.Contains(text, "[dns]") || strings.Contains(text, "[ip]") {
 		t.Fatalf("expected CIDR mode to hide non-CIDR assets, got: %s", text)
 	}
-	if !strings.Contains(text, "[cidr]") || !strings.Contains(text, "[live-ip]") || !strings.Contains(text, "[summary]") {
-		t.Fatalf("expected CIDR, live IP, and summary output, got: %s", text)
+	if !strings.Contains(text, "[mode]") || !strings.Contains(text, "[cidr]") || !strings.Contains(text, "[live-ip]") || !strings.Contains(text, "[summary]") {
+		t.Fatalf("expected mode, CIDR, live IP, and summary output, got: %s", text)
 	}
 }
 

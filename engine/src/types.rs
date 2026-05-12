@@ -48,6 +48,12 @@ pub struct EngineRequest {
     #[serde(default)]
     pub ssh_audit: bool,
     #[serde(default)]
+    pub service_detect: bool,
+    #[serde(default)]
+    pub http_audit: bool,
+    #[serde(default)]
+    pub tls_audit: bool,
+    #[serde(default)]
     pub input_file: String,
     #[serde(default = "default_true")]
     pub subdomains: bool,

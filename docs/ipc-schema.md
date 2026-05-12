@@ -25,15 +25,28 @@ The Go CLI starts `netscope-engine`, writes one JSON request to stdin, and reads
   "timeout_ms": 900,
   "memory_budget_mb": 150,
   "ssh_audit": true,
+  "service_detect": true,
+  "http_audit": true,
+  "tls_audit": false,
   "input_file": ""
 }
 ```
 
 ## Events
 
-Common event types are `progress`, `domain`, `dns_record`, `subdomain`, `ip_asset`, `cidr`, `host`, `open_port`, `service`, `finding`, `warning`, `summary`, and `error`.
+Common event types are `mode`, `progress`, `domain`, `dns_record`, `subdomain`, `ip_asset`, `cidr`, `cidr_ip`, `live_ip`, `host`, `open_port`, `service`, `finding`, `warning`, `summary`, and `error`.
 
 Passive recon is handled in the Go CLI because it uses public HTTPS sources instead of the Rust scan engine.
+
+Mode event:
+
+```json
+{
+  "type": "mode",
+  "mode": "PASSIVE",
+  "message": "passive recon uses public sources, public DNS, archive indexes, certificate transparency, and RDAP"
+}
+```
 
 Recon command shape:
 
@@ -131,6 +144,80 @@ Open port event:
   "reason": "connect accepted",
   "service": "https",
   "banner": ""
+}
+```
+
+Service event:
+
+```json
+{
+  "type": "service",
+  "target": "example.com",
+  "resolved_ip": "93.184.216.34",
+  "port": 80,
+  "transport": "tcp",
+  "service": "http",
+  "service_name": "http",
+  "banner": "HTTP/1.1 200 OK",
+  "confidence": "protocol",
+  "evidence": "HTTP response observed"
+}
+```
+
+HTTP audit event:
+
+```json
+{
+  "type": "http_audit",
+  "target": "example.com",
+  "resolved_ip": "93.184.216.34",
+  "port": 80,
+  "transport": "tcp",
+  "status_code": 200,
+  "server": "example",
+  "content_type": "text/html",
+  "title": "Example Domain",
+  "security_headers": {
+    "strict_transport_security": "",
+    "content_security_policy": "",
+    "x_frame_options": "DENY",
+    "x_content_type_options": "nosniff",
+    "referrer_policy": "",
+    "permissions_policy": ""
+  },
+  "evidence": "single safe HTTP GET / response inspected; no crawling, fuzzing, authentication, or injection performed"
+}
+```
+
+TLS audit event:
+
+```json
+{
+  "type": "tls",
+  "target": "example.com",
+  "resolved_ip": "93.184.216.34",
+  "port": 443,
+  "transport": "tcp",
+  "subject": "CN=example.com",
+  "issuer": "CN=Example Issuer",
+  "sans": ["example.com", "www.example.com"],
+  "not_before": "2026-01-01 00:00:00.0 +00:00:00",
+  "not_after": "2026-04-01 00:00:00.0 +00:00:00",
+  "days_until_expiry": 21,
+  "expired": false,
+  "expiring_soon": true,
+  "self_signed": false,
+  "hostname_checked": "example.com",
+  "hostname_mismatch": false,
+  "trust_valid": true,
+  "trust_error": "",
+  "chain_length": 2,
+  "chain_subjects": ["CN=example.com", "CN=Example Intermediate"],
+  "chain_issuers": ["CN=Example Intermediate", "CN=Example Root"],
+  "negotiated_tls_version": "TLSv1_3",
+  "cipher_suite": "TLS13_AES_256_GCM_SHA384",
+  "limitations": "trust validation uses the bundled Mozilla roots through rustls; cipher posture is based on one negotiated handshake, not exhaustive enumeration",
+  "evidence": "TLS handshake completed and peer certificate metadata was parsed without authentication or exploit probes"
 }
 ```
 

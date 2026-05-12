@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${VERSION:-0.1.0}"
 MAINTAINER="${MAINTAINER:-Netscope Maintainers <maintainers@example.invalid>}"
 HOMEPAGE="${HOMEPAGE:-https://github.com/saiyan566/netscope}"
 SRC_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+VERSION="${VERSION:-$(cat "$SRC_DIR/VERSION" 2>/dev/null || printf '0.3.0-beta')}"
 DIST_DIR="$SRC_DIR/dist"
 WORK_DIR="${TMPDIR:-/tmp}/netscope-deb-$$"
 trap 'rm -rf "$WORK_DIR"' EXIT
