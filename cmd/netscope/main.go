@@ -210,6 +210,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runDNSAudit(args[1:], stdout)
 	case "workspace":
 		return runWorkspaceCommand(args[1:], stdout)
+	case "assets":
+		return runAssetsCommand(args[1:], stdout)
 	case "sources":
 		return runSourcesCommand(args[1:], stdout)
 	case "self-update":
@@ -2436,6 +2438,7 @@ Commands:
   report      Generate text, JSON, Markdown, HTML, CSV, or SARIF reports
   dns-audit   Passive DNS posture audit from public resolver data
   workspace   Manage local SQLite workspaces and scan history
+  assets      Query persistent workspace asset inventory
   sources     List passive recon source adapters
   egress      Show current public egress IP and runtime context
   doctor      Verify install, engine path, and optional capabilities
@@ -2455,6 +2458,7 @@ Examples:
   netscope report --input scan.jsonl --format html --out report.html
   netscope dns-audit --target example.com
   netscope workspace init acme
+  netscope assets list --workspace acme
   netscope sources list
 
 Use "netscope help scan" or "netscope recon --help" for command-specific flags.
@@ -2542,6 +2546,9 @@ Passive/local commands do not require --ack-authorized. Active probes do.
 			return nil
 		case "workspace":
 			printWorkspaceHelp(stdout)
+			return nil
+		case "assets":
+			printAssetsHelp(stdout)
 			return nil
 		case "sources":
 			return runSourcesCommand([]string{"--help"}, stdout)

@@ -27,6 +27,9 @@ netscope workspace list-runs acme --severity high --since 2026-05-01 --until 202
 netscope workspace show-run acme 1
 netscope workspace show-run acme 1 --format json
 netscope workspace assets acme
+netscope assets list --workspace acme
+netscope assets show --workspace acme api.example.com
+netscope assets history --workspace acme api.example.com
 netscope workspace findings acme
 ```
 
@@ -57,6 +60,12 @@ Migration version `1` creates:
 - `schema_migrations`
 - `runs`
 
+Migration version `2` adds Asset Inventory v1:
+
+- `assets`
+- `asset_run_observations`
+- `asset_service_observations`
+
 The `runs` table stores:
 
 - run id
@@ -74,4 +83,8 @@ The `runs` table stores:
 
 The raw JSONL artifact remains the source of truth for detailed reports and diffs.
 
-`workspace assets` and `workspace findings` read the JSONL artifacts from stored runs, dedupe them, and print the current local inventory. If a JSONL artifact has been moved or deleted, Netscope skips that artifact instead of failing the whole workspace summary.
+Successful workspace runs populate the persistent asset inventory from structured JSONL events. The inventory tracks concrete hostnames, IPv4 addresses, and IPv6 addresses with first/last seen metadata and distinct run observations. Service observations are exposed as `latest_observed_services` when structured service events are available.
+
+`workspace assets` is a compatibility alias for the persistent inventory list. `workspace findings` still reads JSONL artifacts from stored runs and dedupes findings. If a JSONL artifact has been moved or deleted, Netscope skips that artifact instead of failing the whole workspace summary.
+
+DNS audit inventory stores only the audited root domain, not external MX/NS/CNAME providers or DNS-referenced A/AAAA answers. Old runs are not backfilled automatically. See `asset-inventory.md`.

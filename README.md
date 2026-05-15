@@ -27,6 +27,7 @@ Netscope intentionally does not include IP hiding, exploit delivery, credential 
 | DNS posture | Complete |
 | Reports and SARIF | Complete |
 | Diffing and workspace history | Complete |
+| Workspace asset inventory | Complete |
 | IPv6 direct targets and guarded CIDRs | Complete |
 | CI fail-on behavior | Complete |
 
@@ -107,6 +108,9 @@ netscope workspace status acme
 netscope workspace list-runs acme --target example.com --mode ACTIVE --profile standard
 netscope workspace show-run acme 1 --format json
 netscope workspace assets acme
+netscope assets list --workspace acme
+netscope assets show --workspace acme api.example.com
+netscope assets history --workspace acme api.example.com
 netscope workspace findings acme
 netscope report --workspace acme --run 1 --format html --out report.html
 netscope diff --workspace acme --old-run 1 --new-run 2 --format json
@@ -202,13 +206,19 @@ netscope scan --workspace acme --target example.com --profile standard --ack-aut
 netscope workspace list-runs acme --target example.com --severity high
 netscope workspace show-run acme 1 --format text
 netscope workspace assets acme
+netscope assets list --workspace acme --type hostname
+netscope assets list --workspace acme --target example.com --format json
+netscope assets show --workspace acme api.example.com
+netscope assets history --workspace acme api.example.com
 netscope workspace findings acme
 netscope workspace list-runs acme
 netscope report --workspace acme --run 1 --format html --out report.html
 netscope diff --workspace acme --old-run 1 --new-run 2
 ```
 
-See `docs/workspaces.md`.
+Asset inventory is populated from successful workspace runs and tracks concrete hostnames, IPv4 addresses, and IPv6 addresses with first/last seen timestamps, root-target observations, and lightweight `latest_observed_services` summaries when structured service events are available. DNS audit inventory deliberately stores only the audited root domain, not MX/NS/CNAME providers or DNS-referenced A/AAAA output. Old runs are not backfilled automatically.
+
+See `docs/workspaces.md` and `docs/asset-inventory.md`.
 
 ## Passive Source Adapters
 

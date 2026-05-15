@@ -136,7 +136,7 @@ func TestWorkspacePersistsRunAndReportsByID(t *testing.T) {
 	if err := run([]string{"workspace", "assets", "acme"}, &out, &out); err != nil {
 		t.Fatalf("workspace assets failed: %v", err)
 	}
-	if !strings.Contains(out.String(), "ip:192.0.2.10") || !strings.Contains(out.String(), "ip:192.0.2.20") {
+	if !strings.Contains(out.String(), "ipv4\t192.0.2.10") || !strings.Contains(out.String(), "ipv4\t192.0.2.20") {
 		t.Fatalf("workspace assets missing stored assets: %s", out.String())
 	}
 	out.Reset()

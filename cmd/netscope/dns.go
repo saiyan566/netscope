@@ -30,6 +30,7 @@ func runDNSAudit(args []string, stdout io.Writer) (err error) {
 	cliOpts := cliOptions{
 		request: engineRequest{
 			Command: "dns-audit",
+			Targets: []string(opts.Targets),
 		},
 		format:    opts.Format,
 		jsonlOut:  opts.JSONLOut,
