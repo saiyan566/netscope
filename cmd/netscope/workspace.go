@@ -27,7 +27,7 @@ type workspaceRunContext struct {
 
 var workspaceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
-const workspaceSchemaVersion = 1
+const workspaceSchemaVersion = 2
 
 func runWorkspaceCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 || hasHelpFlag(args) {
@@ -75,7 +75,7 @@ func runWorkspaceCommand(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return listWorkspaceAssets(stdout, name)
+		return listAssets(stdout, assetListFilters{Workspace: name, Format: "text"})
 	case "findings":
 		name, err := workspaceNameArg(args[1:])
 		if err != nil {
@@ -213,7 +213,13 @@ func finishWorkspaceRun(ctx *workspaceRunContext, writer *cliEventWriter, runErr
 	}
 	_, err = db.Exec(`UPDATE runs SET finished_at = ?, status = ?, summary = ?, findings_count = ?, max_severity = ? WHERE id = ?`,
 		time.Now().UTC().Format(time.RFC3339), status, writer.summary, writer.findingCount(), writer.maxSeverityName(), ctx.RunID)
-	return err
+	if err != nil {
+		return err
+	}
+	if runErr != nil {
+		return nil
+	}
+	return ingestWorkspaceRunAssets(db, ctx.RunID)
 }
 
 func openWorkspace(name string) (*sql.DB, string, error) {
@@ -240,13 +246,9 @@ func openWorkspace(name string) (*sql.DB, string, error) {
 }
 
 func workspaceDir(name string) (string, error) {
-	root := strings.TrimSpace(os.Getenv("NETSCOPE_WORKSPACE_DIR"))
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(home, ".local", "share", "netscope", "workspaces")
+	root, err := workspaceRootDir()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(root, name), nil
 }
@@ -272,7 +274,75 @@ func applyWorkspaceMigrations(db *sql.DB) error {
 	)`); err != nil {
 		return err
 	}
-	_, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, ?)`, workspaceSchemaVersion, time.Now().UTC().Format(time.RFC3339))
+	if _, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	var version int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version < 2 {
+		if err := applyWorkspaceMigrationV2(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyWorkspaceMigrationV2(db *sql.DB) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS assets(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			asset_key TEXT UNIQUE NOT NULL,
+			asset_type TEXT NOT NULL,
+			asset_value TEXT NOT NULL,
+			normalized_value TEXT NOT NULL,
+			first_seen_at TEXT NOT NULL,
+			last_seen_at TEXT NOT NULL,
+			first_seen_run_id INTEGER,
+			last_seen_run_id INTEGER,
+			observation_count INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(first_seen_run_id) REFERENCES runs(id),
+			FOREIGN KEY(last_seen_run_id) REFERENCES runs(id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS asset_run_observations(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			asset_id INTEGER NOT NULL,
+			run_id INTEGER NOT NULL,
+			root_target TEXT,
+			source_stage TEXT NOT NULL,
+			observed_at TEXT NOT NULL,
+			evidence_json TEXT,
+			FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+			FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
+			UNIQUE(asset_id, run_id, root_target, source_stage)
+		)`,
+		`CREATE TABLE IF NOT EXISTS asset_service_observations(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			asset_id INTEGER NOT NULL,
+			run_id INTEGER NOT NULL,
+			transport TEXT,
+			port INTEGER,
+			service TEXT,
+			observed_at TEXT NOT NULL,
+			banner TEXT,
+			FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+			FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
+			UNIQUE(asset_id, run_id, transport, port, service)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_assets_type_value ON assets(asset_type, normalized_value)`,
+		`CREATE INDEX IF NOT EXISTS idx_asset_observations_run ON asset_run_observations(run_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_asset_observations_root ON asset_run_observations(root_target)`,
+		`CREATE INDEX IF NOT EXISTS idx_asset_services_asset ON asset_service_observations(asset_id, observed_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
@@ -295,13 +365,9 @@ func printWorkspaceStatus(stdout io.Writer, name string) error {
 }
 
 func listWorkspaces(stdout io.Writer) error {
-	root := strings.TrimSpace(os.Getenv("NETSCOPE_WORKSPACE_DIR"))
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		root = filepath.Join(home, ".local", "share", "netscope", "workspaces")
+	root, err := workspaceRootDir()
+	if err != nil {
+		return err
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
