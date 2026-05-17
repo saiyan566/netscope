@@ -62,6 +62,7 @@ fn emit_findings_for_event(event: &ScanEvent) {
         ("tcp", 22) => ssh_findings(event),
         ("tcp", 23) => finding(
             event,
+            "telnet_exposed",
             "high",
             "Telnet service exposed",
             "Telnet sends credentials and session data without encryption.",
@@ -71,6 +72,7 @@ fn emit_findings_for_event(event: &ScanEvent) {
         ),
         ("tcp", 80) | ("tcp", 8080) | ("tcp", 8000) | ("tcp", 8888) => finding(
             event,
+            "plain_http_detected",
             "low",
             "Plain HTTP service detected",
             "The service responded on a cleartext HTTP port.",
@@ -80,31 +82,37 @@ fn emit_findings_for_event(event: &ScanEvent) {
         ),
         ("tcp", 6379) => exposed_datastore(
             event,
+            "redis_exposed",
             "Redis service exposed",
             "Restrict Redis to trusted networks, require authentication where supported, and avoid binding it to public interfaces.",
         ),
         ("tcp", 9200) | ("tcp", 9300) => exposed_datastore(
             event,
+            "elasticsearch_exposed",
             "Elasticsearch service exposed",
             "Restrict Elasticsearch to trusted networks and enforce authentication/TLS.",
         ),
         ("tcp", 27017) => exposed_datastore(
             event,
+            "mongodb_exposed",
             "MongoDB service exposed",
             "Restrict MongoDB to trusted networks and require authentication/TLS.",
         ),
         ("tcp", 3306) => exposed_datastore(
             event,
+            "mysql_exposed",
             "MySQL service exposed",
             "Restrict MySQL to application networks and enforce strong authentication/TLS.",
         ),
         ("tcp", 5432) => exposed_datastore(
             event,
+            "postgresql_exposed",
             "PostgreSQL service exposed",
             "Restrict PostgreSQL to application networks and enforce strong authentication/TLS.",
         ),
         ("udp", 161) => finding(
             event,
+            "snmp_responded",
             "medium",
             "SNMP service responded",
             "SNMP can expose sensitive operational metadata when reachable from untrusted networks.",
@@ -114,6 +122,7 @@ fn emit_findings_for_event(event: &ScanEvent) {
         ),
         ("udp", 1900) => finding(
             event,
+            "ssdp_responded",
             "medium",
             "SSDP service responded",
             "SSDP exposure can reveal devices and contribute to reflection traffic.",
@@ -129,6 +138,7 @@ fn ssh_findings(event: &ScanEvent) {
     if event.banner.starts_with("SSH-1.") {
         finding(
             event,
+            "ssh_legacy_protocol",
             "high",
             "Legacy SSH protocol detected",
             "The SSH banner indicates protocol version 1, which is obsolete and unsafe.",
@@ -139,6 +149,7 @@ fn ssh_findings(event: &ScanEvent) {
     } else {
         finding(
             event,
+            "ssh_admin_surface",
             "info",
             "SSH administration surface detected",
             "SSH is reachable on this target. This is not a vulnerability by itself, but it is a sensitive administration surface.",
@@ -149,9 +160,10 @@ fn ssh_findings(event: &ScanEvent) {
     }
 }
 
-fn exposed_datastore(event: &ScanEvent, title: &str, remediation: &str) {
+fn exposed_datastore(event: &ScanEvent, code: &str, title: &str, remediation: &str) {
     finding(
         event,
+        code,
         "medium",
         title,
         "A datastore or search service appears reachable. Exposure may be intended internally but should be tightly scoped.",
@@ -163,6 +175,7 @@ fn exposed_datastore(event: &ScanEvent, title: &str, remediation: &str) {
 
 fn finding(
     event: &ScanEvent,
+    code: &str,
     severity: &str,
     title: &str,
     evidence: &str,
@@ -172,6 +185,7 @@ fn finding(
 ) {
     emit(json!({
         "type": "finding",
+        "finding_code": code,
         "target": event.target,
         "resolved_ip": event.resolved_ip,
         "port": event.port,

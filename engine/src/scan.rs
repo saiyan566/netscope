@@ -507,21 +507,21 @@ fn emit_tls_audit(target: &Target, port: u16, timeout: Duration) {
                 "evidence": "TLS handshake completed and peer certificate metadata was parsed without authentication or exploit probes"
             }));
             if audit.expired {
-                emit_tls_finding(target, port, "high", "TLS certificate is expired", "The certificate not_after date is in the past.", "Renew and deploy a valid certificate for this service.");
+                emit_tls_finding(target, port, "tls_cert_expired", "high", "TLS certificate is expired", "The certificate not_after date is in the past.", "Renew and deploy a valid certificate for this service.");
             } else if audit.expiring_soon {
-                emit_tls_finding(target, port, "medium", "TLS certificate expires soon", "The certificate expires within 30 days.", "Renew the certificate before expiry and monitor certificate lifecycle.");
+                emit_tls_finding(target, port, "tls_cert_expiring_soon", "medium", "TLS certificate expires soon", "The certificate expires within 30 days.", "Renew the certificate before expiry and monitor certificate lifecycle.");
             }
             if audit.self_signed {
-                emit_tls_finding(target, port, "medium", "TLS certificate appears self-signed", "The certificate subject and issuer match.", "Use a certificate issued by an approved CA for externally trusted services.");
+                emit_tls_finding(target, port, "tls_cert_self_signed", "medium", "TLS certificate appears self-signed", "The certificate subject and issuer match.", "Use a certificate issued by an approved CA for externally trusted services.");
             }
             if audit.hostname_mismatch {
-                emit_tls_finding(target, port, "high", "TLS certificate hostname mismatch", "The requested host did not match the certificate SAN/CN identity.", "Deploy a certificate whose SANs cover the exposed hostname.");
+                emit_tls_finding(target, port, "tls_cert_hostname_mismatch", "high", "TLS certificate hostname mismatch", "The requested host did not match the certificate SAN/CN identity.", "Deploy a certificate whose SANs cover the exposed hostname.");
             }
             if !audit.trust_valid {
-                emit_tls_finding(target, port, "medium", "TLS certificate trust validation failed", &format!("Trust validation failed: {}", audit.trust_error), "Deploy a certificate chain trusted by the intended clients and include required intermediates.");
+                emit_tls_finding(target, port, "tls_cert_trust_validation_failed", "medium", "TLS certificate trust validation failed", &format!("Trust validation failed: {}", audit.trust_error), "Deploy a certificate chain trusted by the intended clients and include required intermediates.");
             }
             if audit.protocol_version.contains("TLSv1_0") || audit.protocol_version.contains("TLSv1_1") {
-                emit_tls_finding(target, port, "high", "Legacy TLS protocol negotiated", &format!("Negotiated protocol: {}", audit.protocol_version), "Disable TLS 1.0/1.1 and require TLS 1.2 or newer.");
+                emit_tls_finding(target, port, "tls_legacy_protocol_negotiated", "high", "Legacy TLS protocol negotiated", &format!("Negotiated protocol: {}", audit.protocol_version), "Disable TLS 1.0/1.1 and require TLS 1.2 or newer.");
             }
         }
         Err(err) => emit(json!({
@@ -771,9 +771,10 @@ fn format_ip_san(value: &[u8]) -> String {
     }
 }
 
-fn emit_tls_finding(target: &Target, port: u16, severity: &str, title: &str, evidence: &str, remediation: &str) {
+fn emit_tls_finding(target: &Target, port: u16, code: &str, severity: &str, title: &str, evidence: &str, remediation: &str) {
     emit(json!({
         "type": "finding",
+        "finding_code": code,
         "target": target.original,
         "resolved_ip": target.ip.to_string(),
         "port": port,

@@ -30,6 +30,8 @@ netscope workspace assets acme
 netscope assets list --workspace acme
 netscope assets show --workspace acme api.example.com
 netscope assets history --workspace acme api.example.com
+netscope findings list --workspace acme
+netscope findings triage --workspace acme 1 --status resolved --note "Remediated"
 netscope workspace findings acme
 ```
 
@@ -66,6 +68,11 @@ Migration version `2` adds Asset Inventory v1:
 - `asset_run_observations`
 - `asset_service_observations`
 
+Migration version `3` adds Findings Lifecycle v1:
+
+- `findings`
+- `finding_run_occurrences`
+
 The `runs` table stores:
 
 - run id
@@ -88,3 +95,5 @@ Successful workspace runs populate the persistent asset inventory from structure
 `workspace assets` is a compatibility alias for the persistent inventory list. `workspace findings` still reads JSONL artifacts from stored runs and dedupes findings. If a JSONL artifact has been moved or deleted, Netscope skips that artifact instead of failing the whole workspace summary.
 
 DNS audit inventory stores only the audited root domain, not external MX/NS/CNAME providers or DNS-referenced A/AAAA answers. Old runs are not backfilled automatically. See `asset-inventory.md`.
+
+Successful workspace runs also populate persistent logical findings. Findings can be triaged without being overwritten by later observations, and manually resolved findings become `regressed` if observed again. Netscope does not auto-resolve findings that disappear from later runs. See `findings-lifecycle.md`.

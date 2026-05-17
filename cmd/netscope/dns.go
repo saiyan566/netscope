@@ -160,20 +160,21 @@ func auditDNSDomain(client *http.Client, writer *cliEventWriter, domain string, 
 		"evidence":     "public DNS records inspected through dns.google DoH",
 	})
 	if !spfPresent {
-		emitDNSFinding(writer, domain, "low", "SPF record not observed", "No v=spf1 TXT record was observed for the domain.", "Publish an SPF TXT record that describes authorized mail senders.")
+		emitDNSFinding(writer, domain, "dns_missing_spf", "low", "SPF record not observed", "No v=spf1 TXT record was observed for the domain.", "Publish an SPF TXT record that describes authorized mail senders.")
 	}
 	if dmarcPolicy == "" {
-		emitDNSFinding(writer, domain, "low", "DMARC record not observed", "No _dmarc TXT record was observed for the domain.", "Publish a DMARC record with an explicit policy after validating mail flow.")
+		emitDNSFinding(writer, domain, "dns_missing_dmarc", "low", "DMARC record not observed", "No _dmarc TXT record was observed for the domain.", "Publish a DMARC record with an explicit policy after validating mail flow.")
 	}
 	if !caaPresent {
-		emitDNSFinding(writer, domain, "info", "CAA record not observed", "No CAA record was observed for the domain.", "Consider publishing CAA records to restrict certificate issuance.")
+		emitDNSFinding(writer, domain, "dns_missing_caa", "info", "CAA record not observed", "No CAA record was observed for the domain.", "Consider publishing CAA records to restrict certificate issuance.")
 	}
 	return nil
 }
 
-func emitDNSFinding(writer *cliEventWriter, domain, severity, title, evidence, remediation string) {
+func emitDNSFinding(writer *cliEventWriter, domain, code, severity, title, evidence, remediation string) {
 	_ = writer.Emit(map[string]any{
 		"type":            "finding",
+		"finding_code":    code,
 		"target":          domain,
 		"severity":        severity,
 		"title":           title,

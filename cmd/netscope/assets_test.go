@@ -127,8 +127,8 @@ func TestWorkspaceMigrationV1StartupRemainsSafe(t *testing.T) {
 	if err := reopened.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("schema version query failed: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("expected migrated schema v2, got %d", version)
+	if version != workspaceSchemaVersion {
+		t.Fatalf("expected migrated schema v%d, got %d", workspaceSchemaVersion, version)
 	}
 }
 

@@ -27,7 +27,7 @@ type workspaceRunContext struct {
 
 var workspaceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
-const workspaceSchemaVersion = 2
+const workspaceSchemaVersion = 3
 
 func runWorkspaceCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 || hasHelpFlag(args) {
@@ -219,7 +219,10 @@ func finishWorkspaceRun(ctx *workspaceRunContext, writer *cliEventWriter, runErr
 	if runErr != nil {
 		return nil
 	}
-	return ingestWorkspaceRunAssets(db, ctx.RunID)
+	if err := ingestWorkspaceRunAssets(db, ctx.RunID); err != nil {
+		return err
+	}
+	return ingestWorkspaceRunFindings(db, ctx.RunID)
 }
 
 func openWorkspace(name string) (*sql.DB, string, error) {
@@ -286,6 +289,11 @@ func applyWorkspaceMigrations(db *sql.DB) error {
 			return err
 		}
 	}
+	if version < 3 {
+		if err := applyWorkspaceMigrationV3(db); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -343,6 +351,63 @@ func applyWorkspaceMigrationV2(db *sql.DB) error {
 		}
 	}
 	_, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+func applyWorkspaceMigrationV3(db *sql.DB) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS findings(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			fingerprint TEXT UNIQUE NOT NULL,
+			finding_code TEXT NOT NULL,
+			title TEXT NOT NULL,
+			category TEXT,
+			current_severity TEXT NOT NULL,
+			status TEXT NOT NULL,
+			asset_id INTEGER,
+			target_value TEXT,
+			target_type TEXT,
+			transport TEXT,
+			port INTEGER,
+			first_seen_at TEXT NOT NULL,
+			last_seen_at TEXT NOT NULL,
+			first_seen_run_id INTEGER,
+			last_seen_run_id INTEGER,
+			occurrence_count INTEGER NOT NULL DEFAULT 1,
+			triage_note TEXT,
+			status_updated_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(asset_id) REFERENCES assets(id),
+			FOREIGN KEY(first_seen_run_id) REFERENCES runs(id),
+			FOREIGN KEY(last_seen_run_id) REFERENCES runs(id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS finding_run_occurrences(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			finding_id INTEGER NOT NULL,
+			run_id INTEGER NOT NULL,
+			root_target TEXT,
+			source_stage TEXT NOT NULL,
+			observed_at TEXT NOT NULL,
+			severity_snapshot TEXT NOT NULL,
+			title_snapshot TEXT,
+			evidence_json TEXT,
+			remediation_snapshot TEXT,
+			FOREIGN KEY(finding_id) REFERENCES findings(id) ON DELETE CASCADE,
+			FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
+			UNIQUE(finding_id, run_id, root_target, source_stage)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(current_severity)`,
+		`CREATE INDEX IF NOT EXISTS idx_findings_asset ON findings(asset_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_finding_occurrences_run ON finding_run_occurrences(run_id)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, ?)`, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 

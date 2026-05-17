@@ -630,8 +630,6 @@ func inventoryAssetsFromEvent(command string, event map[string]any) []assetCandi
 		raw = append(raw, text(event, "ip"))
 	case "host", "open_port", "service", "http_audit", "tls":
 		raw = append(raw, firstNonEmpty(text(event, "resolved_ip"), text(event, "target")))
-	case "finding":
-		raw = append(raw, firstNonEmpty(text(event, "resolved_ip"), text(event, "target")))
 	case "dns_posture":
 		if command == "dns-audit" {
 			raw = append(raw, text(event, "domain"))
