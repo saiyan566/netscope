@@ -1,7 +1,5 @@
 use crate::types::{emit, EngineRequest, ScanEvent, Target};
-use rustls::client::{
-    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier, ServerName,
-};
+use rustls::client::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier, ServerName};
 use rustls::{
     Certificate, ClientConfig, ClientConnection, DigitallySignedStruct, OwnedTrustAnchor,
     RootCertStore, SignatureScheme,
@@ -9,8 +7,8 @@ use rustls::{
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -22,7 +20,9 @@ const COMMON_TCP_PORTS: &[u16] = &[
     389, 636, 3306, 5432, 6379, 27017, 9200, 9300, 11211, 5900, 6000, 8000, 8888,
 ];
 
-const COMMON_UDP_PORTS: &[u16] = &[53, 67, 68, 69, 123, 137, 138, 161, 162, 500, 514, 520, 1900, 4500, 5353, 11211];
+const COMMON_UDP_PORTS: &[u16] = &[
+    53, 67, 68, 69, 123, 137, 138, 161, 162, 500, 514, 520, 1900, 4500, 5353, 11211,
+];
 
 #[derive(Clone, Copy)]
 enum Transport {
@@ -96,11 +96,12 @@ pub fn run_scan(request: &EngineRequest, targets: Vec<Target>) -> Vec<ScanEvent>
     };
 
     let tcp_ports = if request.tcp {
-        parse_ports_or_default(&request.ports, COMMON_TCP_PORTS, request.top_ports)
-            .unwrap_or_else(|err| {
+        parse_ports_or_default(&request.ports, COMMON_TCP_PORTS, request.top_ports).unwrap_or_else(
+            |err| {
                 emit(json!({"type": "error", "message": err}));
                 Vec::new()
-            })
+            },
+        )
     } else {
         Vec::new()
     };
@@ -184,10 +185,12 @@ pub fn run_scan(request: &EngineRequest, targets: Vec<Target>) -> Vec<ScanEvent>
                 )
             };
             if let Some(event) = event {
-                emit(serde_json::to_value(&event).unwrap_or_else(|_| json!({
-                    "type": "error",
-                    "message": "failed to serialize scan event"
-                })));
+                emit(serde_json::to_value(&event).unwrap_or_else(|_| {
+                    json!({
+                        "type": "error",
+                        "message": "failed to serialize scan event"
+                    })
+                }));
                 events.lock().expect("event lock poisoned").push(event);
             }
         });
@@ -290,7 +293,23 @@ fn should_probe_service(
         || http_audit
         || tls_audit
         || ssh_audit
-        || matches!(port, 21 | 22 | 25 | 53 | 80 | 110 | 143 | 443 | 587 | 3306 | 5432 | 6379 | 8080 | 8443 | 3389)
+        || matches!(
+            port,
+            21 | 22
+                | 25
+                | 53
+                | 80
+                | 110
+                | 143
+                | 443
+                | 587
+                | 3306
+                | 5432
+                | 6379
+                | 8080
+                | 8443
+                | 3389
+        )
 }
 
 fn probe_tcp_service(
@@ -310,26 +329,45 @@ fn probe_tcp_service(
         if let Some(banner) = read_banner(&mut stream, 256) {
             if banner.starts_with("SSH-") {
                 emit_ssh_service(target, port, &banner);
-                return ServiceProbeResult { service: "ssh".into(), banner };
+                return ServiceProbeResult {
+                    service: "ssh".into(),
+                    banner,
+                };
             }
             if !banner.is_empty() {
-                return ServiceProbeResult { service: service_name(port, "tcp").into(), banner };
+                return ServiceProbeResult {
+                    service: service_name(port, "tcp").into(),
+                    banner,
+                };
             }
         }
     }
 
     if matches!(port, 80 | 8080 | 8000 | 8888) || http_audit {
         if let Some(response) = http_probe(&mut stream, target, port, http_audit) {
-            return ServiceProbeResult { service: "http".into(), banner: response };
+            return ServiceProbeResult {
+                service: "http".into(),
+                banner: response,
+            };
         }
     }
 
     if matches!(port, 443 | 8443 | 465 | 993 | 995) {
-        emit_service_detection(target, port, "https", "", "port-based", "common TLS service port");
+        emit_service_detection(
+            target,
+            port,
+            "https",
+            "",
+            "port-based",
+            "common TLS service port",
+        );
         if tls_audit {
             emit_tls_audit(target, port, timeout);
         }
-        return ServiceProbeResult { service: "https".into(), banner: String::new() };
+        return ServiceProbeResult {
+            service: "https".into(),
+            banner: String::new(),
+        };
     }
 
     if service_detect {
@@ -337,50 +375,108 @@ fn probe_tcp_service(
             21 | 25 | 110 | 143 | 587 => {
                 if let Some(banner) = read_banner(&mut stream, 512) {
                     let service = service_name(port, "tcp");
-                    emit_service_detection(target, port, service, &banner, "banner", "server sent protocol banner");
-                    return ServiceProbeResult { service: service.into(), banner };
+                    emit_service_detection(
+                        target,
+                        port,
+                        service,
+                        &banner,
+                        "banner",
+                        "server sent protocol banner",
+                    );
+                    return ServiceProbeResult {
+                        service: service.into(),
+                        banner,
+                    };
                 }
             }
             53 => {
                 if let Some(banner) = dns_tcp_probe(&mut stream) {
-                    emit_service_detection(target, port, "dns", &banner, "protocol", "DNS over TCP query received a response");
-                    return ServiceProbeResult { service: "dns".into(), banner };
+                    emit_service_detection(
+                        target,
+                        port,
+                        "dns",
+                        &banner,
+                        "protocol",
+                        "DNS over TCP query received a response",
+                    );
+                    return ServiceProbeResult {
+                        service: "dns".into(),
+                        banner,
+                    };
                 }
             }
             3306 => {
                 if let Some(banner) = read_banner(&mut stream, 512) {
-                    emit_service_detection(target, port, "mysql", &banner, "banner", "database handshake banner observed");
-                    return ServiceProbeResult { service: "mysql".into(), banner };
+                    emit_service_detection(
+                        target,
+                        port,
+                        "mysql",
+                        &banner,
+                        "banner",
+                        "database handshake banner observed",
+                    );
+                    return ServiceProbeResult {
+                        service: "mysql".into(),
+                        banner,
+                    };
                 }
             }
             5432 => {
-                emit_service_detection(target, port, "postgres", "", "port-based", "common PostgreSQL service port");
-                return ServiceProbeResult { service: "postgres".into(), banner: String::new() };
+                emit_service_detection(
+                    target,
+                    port,
+                    "postgres",
+                    "",
+                    "port-based",
+                    "common PostgreSQL service port",
+                );
+                return ServiceProbeResult {
+                    service: "postgres".into(),
+                    banner: String::new(),
+                };
             }
             6379 => {
                 if let Some(banner) = redis_ping_probe(&mut stream) {
-                    emit_service_detection(target, port, "redis", &banner, "protocol", "Redis PING received a response");
-                    return ServiceProbeResult { service: "redis".into(), banner };
+                    emit_service_detection(
+                        target,
+                        port,
+                        "redis",
+                        &banner,
+                        "protocol",
+                        "Redis PING received a response",
+                    );
+                    return ServiceProbeResult {
+                        service: "redis".into(),
+                        banner,
+                    };
                 }
             }
             3389 => {
-                emit_service_detection(target, port, "rdp", "", "port-based", "common RDP service port");
-                return ServiceProbeResult { service: "rdp".into(), banner: String::new() };
+                emit_service_detection(
+                    target,
+                    port,
+                    "rdp",
+                    "",
+                    "port-based",
+                    "common RDP service port",
+                );
+                return ServiceProbeResult {
+                    service: "rdp".into(),
+                    banner: String::new(),
+                };
             }
             _ => {}
         }
     }
 
-    ServiceProbeResult { service: service_name(port, "tcp").into(), banner: String::new() }
+    ServiceProbeResult {
+        service: service_name(port, "tcp").into(),
+        banner: String::new(),
+    }
 }
 
 fn emit_ssh_service(target: &Target, port: u16, banner: &str) {
-    let protocol_version = banner
-        .split('-')
-        .nth(1)
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let protocol_version = banner.split('-').nth(1).unwrap_or("").trim().to_string();
     let server_id = banner
         .splitn(3, '-')
         .nth(2)
@@ -507,21 +603,63 @@ fn emit_tls_audit(target: &Target, port: u16, timeout: Duration) {
                 "evidence": "TLS handshake completed and peer certificate metadata was parsed without authentication or exploit probes"
             }));
             if audit.expired {
-                emit_tls_finding(target, port, "tls_cert_expired", "high", "TLS certificate is expired", "The certificate not_after date is in the past.", "Renew and deploy a valid certificate for this service.");
+                emit_tls_finding(
+                    target,
+                    port,
+                    "tls_cert_expired",
+                    "high",
+                    "TLS certificate is expired",
+                    "The certificate not_after date is in the past.",
+                    "Renew and deploy a valid certificate for this service.",
+                );
             } else if audit.expiring_soon {
-                emit_tls_finding(target, port, "tls_cert_expiring_soon", "medium", "TLS certificate expires soon", "The certificate expires within 30 days.", "Renew the certificate before expiry and monitor certificate lifecycle.");
+                emit_tls_finding(
+                    target,
+                    port,
+                    "tls_cert_expiring_soon",
+                    "medium",
+                    "TLS certificate expires soon",
+                    "The certificate expires within 30 days.",
+                    "Renew the certificate before expiry and monitor certificate lifecycle.",
+                );
             }
             if audit.self_signed {
-                emit_tls_finding(target, port, "tls_cert_self_signed", "medium", "TLS certificate appears self-signed", "The certificate subject and issuer match.", "Use a certificate issued by an approved CA for externally trusted services.");
+                emit_tls_finding(
+                    target,
+                    port,
+                    "tls_cert_self_signed",
+                    "medium",
+                    "TLS certificate appears self-signed",
+                    "The certificate subject and issuer match.",
+                    "Use a certificate issued by an approved CA for externally trusted services.",
+                );
             }
             if audit.hostname_mismatch {
-                emit_tls_finding(target, port, "tls_cert_hostname_mismatch", "high", "TLS certificate hostname mismatch", "The requested host did not match the certificate SAN/CN identity.", "Deploy a certificate whose SANs cover the exposed hostname.");
+                emit_tls_finding(
+                    target,
+                    port,
+                    "tls_cert_hostname_mismatch",
+                    "high",
+                    "TLS certificate hostname mismatch",
+                    "The requested host did not match the certificate SAN/CN identity.",
+                    "Deploy a certificate whose SANs cover the exposed hostname.",
+                );
             }
             if !audit.trust_valid {
                 emit_tls_finding(target, port, "tls_cert_trust_validation_failed", "medium", "TLS certificate trust validation failed", &format!("Trust validation failed: {}", audit.trust_error), "Deploy a certificate chain trusted by the intended clients and include required intermediates.");
             }
-            if audit.protocol_version.contains("TLSv1_0") || audit.protocol_version.contains("TLSv1_1") {
-                emit_tls_finding(target, port, "tls_legacy_protocol_negotiated", "high", "Legacy TLS protocol negotiated", &format!("Negotiated protocol: {}", audit.protocol_version), "Disable TLS 1.0/1.1 and require TLS 1.2 or newer.");
+            if audit.protocol_version.contains("TLSv1_0")
+                || audit.protocol_version.contains("TLSv1_1")
+            {
+                emit_tls_finding(
+                    target,
+                    port,
+                    "tls_legacy_protocol_negotiated",
+                    "high",
+                    "Legacy TLS protocol negotiated",
+                    &format!("Negotiated protocol: {}", audit.protocol_version),
+                    "Disable TLS 1.0/1.1 and require TLS 1.2 or newer.",
+                );
             }
         }
         Err(err) => emit(json!({
@@ -626,7 +764,11 @@ fn validate_tls_trust(target: &Target, port: u16, timeout: Duration) -> (bool, S
     };
     let mut roots = RootCertStore::empty();
     roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(ta.subject, ta.spki, ta.name_constraints)
+        OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
     }));
     let config = ClientConfig::builder()
         .with_safe_defaults()
@@ -634,7 +776,12 @@ fn validate_tls_trust(target: &Target, port: u16, timeout: Duration) -> (bool, S
         .with_no_client_auth();
     let mut conn = match ClientConnection::new(Arc::new(config), server_name) {
         Ok(value) => value,
-        Err(err) => return (false, format!("failed to create verifying TLS client: {err}")),
+        Err(err) => {
+            return (
+                false,
+                format!("failed to create verifying TLS client: {err}"),
+            )
+        }
     };
     let mut tcp = match tcp_connect(target.ip, port, timeout) {
         Some(value) => value,
@@ -669,8 +816,12 @@ fn parse_tls_certificates(
             chain_issuers.push(parsed.issuer().to_string());
         }
     }
-    let mut audit =
-        parse_tls_certificate(first.0.as_slice(), expected_host, protocol_version, cipher_suite)?;
+    let mut audit = parse_tls_certificate(
+        first.0.as_slice(),
+        expected_host,
+        protocol_version,
+        cipher_suite,
+    )?;
     audit.trust_valid = trust_valid;
     audit.trust_error = trust_error;
     audit.chain_length = certs.len();
@@ -685,7 +836,8 @@ fn parse_tls_certificate(
     protocol_version: String,
     cipher_suite: String,
 ) -> Result<TLSAudit, String> {
-    let (_, cert) = parse_x509_certificate(der).map_err(|err| format!("failed to parse certificate: {err}"))?;
+    let (_, cert) =
+        parse_x509_certificate(der).map_err(|err| format!("failed to parse certificate: {err}"))?;
     let subject = cert.subject().to_string();
     let issuer = cert.issuer().to_string();
     let not_before_time = cert.validity().not_before;
@@ -742,8 +894,12 @@ fn certificate_hostname_matches(sans: &[String], subject: &str, expected_host: &
         }
     }
     if sans.is_empty() {
-        return subject.to_ascii_lowercase().contains(&format!("cn={expected}"))
-            || subject.to_ascii_lowercase().contains(&format!("cn = {expected}"));
+        return subject
+            .to_ascii_lowercase()
+            .contains(&format!("cn={expected}"))
+            || subject
+                .to_ascii_lowercase()
+                .contains(&format!("cn = {expected}"));
     }
     false
 }
@@ -771,7 +927,15 @@ fn format_ip_san(value: &[u8]) -> String {
     }
 }
 
-fn emit_tls_finding(target: &Target, port: u16, code: &str, severity: &str, title: &str, evidence: &str, remediation: &str) {
+fn emit_tls_finding(
+    target: &Target,
+    port: u16,
+    code: &str,
+    severity: &str,
+    title: &str,
+    evidence: &str,
+    remediation: &str,
+) {
     emit(json!({
         "type": "finding",
         "finding_code": code,
@@ -817,7 +981,14 @@ fn http_probe(stream: &mut TcpStream, target: &Target, port: u16, audit: bool) -
     if audit {
         emit_http_audit(target, port, &response);
     } else {
-        emit_service_detection(target, port, "http", &status_line, "protocol", "HTTP response status line observed");
+        emit_service_detection(
+            target,
+            port,
+            "http",
+            &status_line,
+            "protocol",
+            "HTTP response status line observed",
+        );
     }
     Some(status_line)
 }
@@ -852,7 +1023,14 @@ fn emit_http_audit(target: &Target, port: u16, response: &str) {
         "security_headers": security_headers,
         "evidence": "single safe HTTP GET / response inspected; no crawling, fuzzing, authentication, or injection performed"
     }));
-    emit_service_detection(target, port, "http", &format!("HTTP {status_code}"), "protocol", "HTTP response observed");
+    emit_service_detection(
+        target,
+        port,
+        "http",
+        &format!("HTTP {status_code}"),
+        "protocol",
+        "HTTP response observed",
+    );
 }
 
 fn parse_http_headers(response: &str) -> std::collections::HashMap<String, String> {
@@ -905,7 +1083,11 @@ fn redis_ping_probe(stream: &mut TcpStream) -> Option<String> {
 }
 
 fn scan_udp(target: &Target, port: u16, timeout: Duration, retries: usize) -> Option<ScanEvent> {
-    let bind_addr = if target.ip.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+    let bind_addr = if target.ip.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
     let socket = UdpSocket::bind(bind_addr).ok()?;
     let _ = socket.set_read_timeout(Some(timeout));
     let _ = socket.set_write_timeout(Some(timeout));
@@ -945,7 +1127,11 @@ fn tcp_connect(ip: IpAddr, port: u16, timeout: Duration) -> Option<TcpStream> {
     TcpStream::connect_timeout(&addr, timeout).ok()
 }
 
-pub fn parse_ports_or_default(spec: &str, defaults: &[u16], top: usize) -> Result<Vec<u16>, String> {
+pub fn parse_ports_or_default(
+    spec: &str,
+    defaults: &[u16],
+    top: usize,
+) -> Result<Vec<u16>, String> {
     if spec.trim().is_empty() {
         return Ok(defaults.iter().copied().take(top.max(1)).collect());
     }
