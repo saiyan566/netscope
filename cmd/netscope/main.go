@@ -212,6 +212,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runWorkspaceCommand(args[1:], stdout)
 	case "assets":
 		return runAssetsCommand(args[1:], stdout)
+	case "findings":
+		return runFindingsCommand(args[1:], stdout)
 	case "sources":
 		return runSourcesCommand(args[1:], stdout)
 	case "self-update":
@@ -2439,6 +2441,7 @@ Commands:
   dns-audit   Passive DNS posture audit from public resolver data
   workspace   Manage local SQLite workspaces and scan history
   assets      Query persistent workspace asset inventory
+  findings    Query and triage persistent workspace findings
   sources     List passive recon source adapters
   egress      Show current public egress IP and runtime context
   doctor      Verify install, engine path, and optional capabilities

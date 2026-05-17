@@ -99,7 +99,11 @@ fn expand_ipv4_cidr(spec: &str, base: Ipv4Addr, prefix: u32) -> Result<Vec<Targe
     }
 
     let base_num = u32::from(base);
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
     let network = base_num & mask;
     let broadcast = network | !mask;
 
@@ -232,7 +236,10 @@ mod tests {
     fn expands_small_ipv6_cidr() {
         let out = expand_one("2001:db8::/126").unwrap();
         let ips: Vec<String> = out.iter().map(|t| t.ip.to_string()).collect();
-        assert_eq!(ips, vec!["2001:db8::", "2001:db8::1", "2001:db8::2", "2001:db8::3"]);
+        assert_eq!(
+            ips,
+            vec!["2001:db8::", "2001:db8::1", "2001:db8::2", "2001:db8::3"]
+        );
     }
 
     #[test]
