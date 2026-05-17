@@ -216,7 +216,7 @@ netscope report --workspace acme --run 1 --format html --out report.html
 netscope diff --workspace acme --old-run 1 --new-run 2
 ```
 
-Asset inventory is populated from successful workspace runs and tracks concrete hostnames, IPv4 addresses, and IPv6 addresses with first/last seen timestamps, root-target observations, and lightweight `latest_observed_services` summaries when structured service events are available. DNS audit inventory deliberately stores only the audited root domain, not MX/NS/CNAME providers or DNS-referenced A/AAAA output. Old runs are not backfilled automatically.
+Asset inventory is populated from successful workspace runs and tracks concrete hostnames, IPv4 addresses, and IPv6 addresses with first/last seen timestamps, root-target observations, and lightweight `latest_observed_services` summaries when structured service events are available. DNS CNAME/provider relationship hostnames remain in recon output and artifacts, but are not stored as first-class inventory assets unless independently discovered as scoped assets. DNS audit inventory deliberately stores only the audited root domain, not MX/NS/CNAME providers or DNS-referenced A/AAAA output. Old runs are not backfilled automatically.
 
 See `docs/workspaces.md` and `docs/asset-inventory.md`.
 

@@ -636,10 +636,6 @@ func inventoryAssetsFromEvent(command string, event map[string]any) []assetCandi
 		if command == "dns-audit" {
 			raw = append(raw, text(event, "domain"))
 		}
-	case "dns_record":
-		if command != "dns-audit" {
-			raw = append(raw, text(event, "name"))
-		}
 	}
 	candidates := make([]assetCandidate, 0, len(raw))
 	seen := map[string]bool{}

@@ -19,6 +19,7 @@ Not tracked as inventory assets:
 - report strings
 - file paths
 - arbitrary metadata strings
+- DNS CNAME-chain or provider hostnames, including intermediate aliases and final cloud/load-balancer destinations
 - external DNS provider references such as MX, NS, or CNAME targets
 - DNS-referenced A/AAAA addresses from DNS posture output unless they are independently discovered or scanned through recon or scan events
 
@@ -80,6 +81,10 @@ netscope dns-audit --workspace acme --target example.com
 ```
 
 may store `example.com` as the audited root domain. It must not store MX provider domains, NS hosts, CNAME provider targets, CDN references, or A/AAAA addresses that appear only in DNS posture records.
+
+## DNS Relationships
+
+Recon and DNS audit output still preserve DNS records, CNAME chains, and provider relationship data in terminal output, JSONL artifacts, and reports. Asset Inventory v1 does not store those relationship-only hostnames as first-class assets unless the same hostname is independently emitted as an explicit discovered asset, such as a selected `subdomain` event. A future DNS Relationship Intelligence Layer will model those relationships directly.
 
 ## Backfill
 

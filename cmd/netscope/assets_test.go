@@ -208,6 +208,61 @@ func TestDNSAuditInventoryGuard(t *testing.T) {
 	}
 }
 
+func TestReconCNAMEChainHostnamesAreNotInventoryAssets(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NETSCOPE_WORKSPACE_DIR", root)
+	db, _, err := openWorkspace("acme")
+	if err != nil {
+		t.Fatalf("open workspace failed: %v", err)
+	}
+	defer db.Close()
+	runID := insertInventoryRun(t, db, "recon", "PASSIVE", []string{"example.com"}, []string{
+		`{"type":"domain","domain":"example.com","resolver":"public-sources"}`,
+		`{"type":"subdomain","domain":"example.com","name":"api.example.com","addresses":"203.0.113.10","ipv4":"203.0.113.10","sources":"fixture"}`,
+		`{"type":"dns_record","domain":"example.com","name":"api.example.com","record_type":"CNAME","value":"api.backend.example.net","source":"dns.google"}`,
+		`{"type":"dns_record","domain":"example.net","name":"api.backend.example.net","record_type":"CNAME","value":"lb-123.elb.amazonaws.com","source":"dns.google"}`,
+		`{"type":"dns_record","domain":"amazonaws.com","name":"lb-123.elb.amazonaws.com","record_type":"A","value":"203.0.113.10","source":"dns.google"}`,
+		`{"type":"ip_asset","ip":"203.0.113.10","name":"api.example.com","source":"dns-google"}`,
+	})
+	if err := ingestWorkspaceRunAssets(db, runID); err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	values := inventoryAssetValues(t, db)
+	for _, want := range []string{"example.com", "api.example.com", "203.0.113.10"} {
+		if !values[want] {
+			t.Fatalf("expected inventory asset %q, got %#v", want, values)
+		}
+	}
+	for _, unwanted := range []string{"api.backend.example.net", "lb-123.elb.amazonaws.com"} {
+		if values[unwanted] {
+			t.Fatalf("CNAME/provider-only hostname %q should not be an inventory asset: %#v", unwanted, values)
+		}
+	}
+}
+
+func TestReconCNAMEExplicitDiscoveryOverride(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NETSCOPE_WORKSPACE_DIR", root)
+	db, _, err := openWorkspace("acme")
+	if err != nil {
+		t.Fatalf("open workspace failed: %v", err)
+	}
+	defer db.Close()
+	runID := insertInventoryRun(t, db, "recon", "PASSIVE", []string{"example.com"}, []string{
+		`{"type":"domain","domain":"example.com","resolver":"public-sources"}`,
+		`{"type":"subdomain","domain":"example.com","name":"api.example.com","sources":"fixture"}`,
+		`{"type":"dns_record","domain":"example.com","name":"api.example.com","record_type":"CNAME","value":"api.backend.example.net","source":"dns.google"}`,
+		`{"type":"subdomain","domain":"example.com","name":"api.backend.example.net","sources":"fixture"}`,
+	})
+	if err := ingestWorkspaceRunAssets(db, runID); err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	values := inventoryAssetValues(t, db)
+	if !values["api.backend.example.net"] {
+		t.Fatalf("explicitly discovered CNAME target should be allowed as an asset: %#v", values)
+	}
+}
+
 func TestAssetsCLIListShowHistoryAndWorkspaceSelection(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("NETSCOPE_WORKSPACE_DIR", root)
@@ -336,4 +391,17 @@ func mustLookupAsset(t *testing.T, db *sql.DB, identity string) inventoryAsset {
 		t.Fatalf("lookup asset %q failed: %v", identity, err)
 	}
 	return asset
+}
+
+func inventoryAssetValues(t *testing.T, db *sql.DB) map[string]bool {
+	t.Helper()
+	assets, err := queryAssets(db, assetListFilters{Workspace: "acme"})
+	if err != nil {
+		t.Fatalf("query assets failed: %v", err)
+	}
+	values := map[string]bool{}
+	for _, asset := range assets {
+		values[asset.AssetValue] = true
+	}
+	return values
 }
